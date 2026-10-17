@@ -358,6 +358,14 @@ describe('todo client bundle', () => {
     assert.equal(clientModule.matchesFilter({ status: 'open' }, 'done'), false)
     for (const status of ['proposed', 'review', 'blocked']) assert.equal(clientModule.matchesFilter({ status }, 'attention'), true)
     for (const status of ['open', 'working', 'confirmed', 'done', 'void']) assert.equal(clientModule.matchesFilter({ status }, 'attention'), false)
+    // The three group tabs are the whole toolbar: no tab per status any more.
+    assert.deepEqual(clientModule.FILTERS, ['attention', 'progress', 'all'])
+    for (const status of ['open', 'working', 'confirmed']) assert.equal(clientModule.matchesFilter({ status }, 'progress'), true)
+    for (const status of ['proposed', 'review', 'blocked', 'done', 'void']) assert.equal(clientModule.matchesFilter({ status }, 'progress'), false)
+    // A single status stays filterable even without its own tab.
+    assert.equal(clientModule.matchesFilter({ status: 'void' }, 'void'), true)
+    assert.equal(clientModule.isAttention({ status: 'review' }), true)
+    assert.equal(clientModule.isAttention({ status: 'confirmed' }), false)
 
     assert.equal(clientModule.actionLabel({ status: 'review' }, 'reject'), '打回重做')
     assert.equal(clientModule.actionLabel({ status: 'proposed' }, 'reject'), '驳回')
@@ -380,6 +388,10 @@ describe('todo client bundle', () => {
     assert.equal(clientModule.totalOf(null, 'project'), 0)
     assert.equal(clientModule.attentionOf(state, 'project'), 4)
     assert.equal(clientModule.attentionOf(state, 'global'), 0)
+    // A group tab sums the counts of the statuses it bundles.
+    assert.equal(clientModule.countOf(state, 'project', 'progress'), 3)
+    assert.equal(clientModule.countOf(state, 'project', 'all'), 7)
+    assert.equal(clientModule.countOf(state, 'global', 'all'), 0, 'a disabled level counts as zero')
 
     const merged = clientModule.mergeLevel(state, { scope: 'project', enabled: true, total: 8, counts: {}, todos: [] })
     assert.equal(merged.levels.project.total, 8)
@@ -483,8 +495,14 @@ describe('todo panel rendering', () => {
       assert.match(rendered, /Write the tests/)
       assert.match(rendered, /Add dark mode/)
       // The proposed row is labelled as waiting and offers the accept action.
-      assert.match(rendered, /待确认/)
+      assert.match(rendered, /待你接受/)
       assert.match(rendered, /确认接受/)
+      // The toolbar is three group tabs, not one tab per status.
+      const filterTabs = elements(tree, 'button')
+        .filter((button) => button.props.className === 'todoTab')
+        .map((button) => texts(button).join(''))
+      assert.equal(filterTabs.length, 5, filterTabs.join(' | '))
+      for (const label of ['待我处理1', '进行中1', '全部2']) assert.ok(filterTabs.includes(label), `missing tab ${label}: ${filterTabs.join(' | ')}`)
       // The open row offers the hand-off to the model.
       assert.match(rendered, /交给 AI 完成/)
       // Real state replaced the empty-state text.

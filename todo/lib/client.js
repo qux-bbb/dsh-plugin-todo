@@ -36,19 +36,52 @@ window.__ModuleLoader__.load({
     /** Marker header the host API requires; a cross-site request cannot set it. */
     const CLIENT_HEADER = 'x-todo-client'
 
-    /** Status presentation: order is the order the filter tabs appear in. */
+    /**
+     * Status presentation: how one todo explains its own state. The row badge,
+     * not a filter tab, is what names the status — one tab per status turned the
+     * toolbar into a row of mostly-empty buttons, and a todo in `review` showed
+     * up under both `待我处理` and `待确认完成` at the same time.
+     */
     const STATUS_META = {
-      proposed: { label: '待确认', hint: 'AI 提出的待办，需要你确认后才生效' },
-      review: { label: '待确认完成', hint: 'AI 说做完了，等你确认结果' },
-      blocked: { label: '待补充', hint: 'AI 缺信息，等你回答' },
-      working: { label: '进行中', hint: 'AI 正在处理' },
-      confirmed: { label: '已确认', hint: '你已确认结果，可标记完成' },
+      proposed: { label: '待你接受', hint: 'AI 提出的待办，需要你确认后才生效' },
+      review: { label: '待你确认', hint: 'AI 说做完了，等你确认结果' },
+      blocked: { label: '待你补充', hint: 'AI 缺信息，等你回答' },
+      working: { label: 'AI 进行中', hint: 'AI 正在处理' },
+      confirmed: { label: '已确认，待收尾', hint: '你已确认结果，等收尾标记完成' },
       open: { label: '待办', hint: '还没开始' },
       done: { label: '已完成', hint: '已完成' },
       void: { label: '已作废', hint: '已作废' },
     }
-    /** Filter tabs, in order; `attention` is a client-side pseudo-filter. */
-    const FILTERS = ['attention', 'proposed', 'review', 'blocked', 'working', 'confirmed', 'open', 'done', 'void', 'all']
+    /**
+     * The filter tabs, in order. A tab bundles several statuses so the toolbar
+     * stays at three buttons; `statuses: null` means "everything".
+     */
+    const FILTER_GROUPS = [
+      {
+        id: 'attention',
+        label: '待我处理',
+        hint: '待你接受 · 待你确认 · 待你补充 — 只有你能推进的',
+        statuses: ['proposed', 'review', 'blocked'],
+      },
+      {
+        id: 'progress',
+        label: '进行中',
+        hint: '待办 · AI 进行中 · 已确认待收尾 — 还在流转，暂时不需要你操作',
+        statuses: ['open', 'working', 'confirmed'],
+      },
+      {
+        id: 'all',
+        label: '全部',
+        hint: '当前范围内所有待办，含已完成与已作废',
+        statuses: null,
+      },
+    ]
+    /** The filter tabs, in order. */
+    const FILTERS = FILTER_GROUPS.map((group) => group.id)
+    /** Tabs by id, for label / hint / status lookup. */
+    const GROUP_BY_ID = new Map(FILTER_GROUPS.map((group) => [group.id, group]))
+    /** The statuses that mean "needs a human decision right now". */
+    const ATTENTION_STATUSES = GROUP_BY_ID.get('attention').statuses
     /** Priority presentation. */
     const PRIORITY_META = {
       high: { label: '高', marker: '!!' },
@@ -171,16 +204,39 @@ window.__ModuleLoader__.load({
       return state?.levels?.[scope]?.counts ?? {}
     }
 
+    /** The statuses one filter tab covers, or `null` for "everything". */
+    function statusesOf(filter) {
+      return GROUP_BY_ID.get(filter)?.statuses ?? null
+    }
+
+    /** The number of todos one filter tab covers, from the server counts. */
+    function countOf(state, scope, filter) {
+      if (filter === 'all') return totalOf(state, scope)
+      const wanted = statusesOf(filter)
+      if (wanted === null) {
+        return countsOf(state, scope)[filter] ?? 0
+      }
+      const counts = countsOf(state, scope)
+      return wanted.reduce((sum, status) => sum + (counts[status] ?? 0), 0)
+    }
+
     /** The number of todos waiting for a human decision. */
     function attentionOf(state, scope) {
-      const counts = countsOf(state, scope)
-      return (counts.proposed ?? 0) + (counts.review ?? 0) + (counts.blocked ?? 0)
+      return countOf(state, scope, 'attention')
+    }
+
+    /** Whether a todo is waiting for the user right now. */
+    function isAttention(todo) {
+      return ATTENTION_STATUSES.includes(todo.status)
     }
 
     /** Whether one todo passes the current filter. */
     function matchesFilter(todo, filter) {
       if (filter === 'all') return true
-      if (filter === 'attention') return todo.status === 'proposed' || todo.status === 'review' || todo.status === 'blocked'
+      const wanted = statusesOf(filter)
+      if (wanted !== null) return wanted.includes(todo.status)
+      // An ungrouped value is a plain status name: a single status stays
+      // filterable even though no tab is dedicated to it any more.
       return todo.status === filter
     }
 
@@ -699,10 +755,10 @@ window.__ModuleLoader__.load({
         : activeSession.cwd !== null && activeSession.cwd !== ''
           ? '跟随当前会话'
           : state?.current?.source === 'default' ? '默认（最近使用的项目）' : '跟随当前会话'
-      const enabledFilters = FILTERS.filter((candidate) => {
-        if (candidate === 'all' || candidate === 'attention') return true
-        return countsOf(state, scope)[candidate] !== undefined || level?.enabled === true
-      })
+      // The three group tabs are always present: they answer "is anything
+      // waiting for me" even before the first state arrives, and a group never
+      // disappears just because one of its statuses is empty.
+      const enabledFilters = FILTERS
 
       const children = []
 
@@ -782,20 +838,16 @@ window.__ModuleLoader__.load({
         h('div', { className: 'todoToolbar' },
           h('div', { className: 'todoTabs' },
             enabledFilters.map((candidate) => {
-              const counts = countsOf(state, scope)
-              const count = candidate === 'attention'
-                ? attentionOf(state, scope)
-                : candidate === 'all'
-                  ? totalOf(state, scope)
-                  : counts[candidate] ?? 0
+              const group = GROUP_BY_ID.get(candidate) ?? { label: candidate, hint: '' }
+              const count = countOf(state, scope, candidate)
               return h('button', {
                 key: candidate,
                 type: 'button',
                 className: 'todoTab',
                 'data-active': String(filter === candidate),
-                title: candidate === 'all' ? '全部' : candidate === 'attention' ? '待确认 / 待确认完成 / 待补充' : STATUS_META[candidate]?.hint,
+                title: group.hint,
                 onClick: () => setFilter(candidate),
-              }, candidate === 'all' ? '全部' : candidate === 'attention' ? '待我处理' : STATUS_META[candidate]?.label ?? candidate,
+              }, group.label,
               h('span', { className: 'todoCount' }, String(count)))
             }))),
         state === null
@@ -866,7 +918,7 @@ window.__ModuleLoader__.load({
         children.push(h('div', { className: 'todoState', key: 'disabled' }, '该层级在当前插件配置下被禁用（config.level）。'))
       } else if (rows.length === 0) {
         children.push(h('div', { className: 'todoState', key: 'empty' },
-          query.trim() !== '' ? '没有匹配的待办。' : filter === 'attention' ? '没有需要你处理的待办。' : '这里还没有待办。'))
+          query.trim() !== '' ? '没有匹配的待办。' : filter === 'attention' ? '没有需要你处理的待办。' : filter === 'progress' ? '没有进行中的待办。' : '这里还没有待办。'))
       }
 
       children.push(h('div', { className: 'todoList', key: 'list' },
@@ -1147,7 +1199,7 @@ window.__ModuleLoader__.load({
             className: 'todoItem',
             key: `${todo.scope}:${todo.id}`,
             'data-expanded': String(isExpanded),
-            'data-attention': String(todo.status === 'proposed' || todo.status === 'review' || todo.status === 'blocked'),
+            'data-attention': String(isAttention(todo)),
           }, ...rowsHtml)
         })))
 
@@ -1201,8 +1253,12 @@ window.__ModuleLoader__.load({
     exports.matchesFilter = matchesFilter
     exports.actionLabel = actionLabel
     exports.totalOf = totalOf
+    exports.countOf = countOf
     exports.attentionOf = attentionOf
+    exports.isAttention = isAttention
     exports.mergeLevel = mergeLevel
+    exports.FILTERS = FILTERS
+    exports.FILTER_GROUPS = FILTER_GROUPS
     exports.STATUS_META = STATUS_META
     // The bridge's report, exported so the follow behavior is testable.
     exports.activeSession = activeSession
