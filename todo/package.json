@@ -1,0 +1,35 @@
+{
+  "name": "dsh-plugin-todo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "User-confirmed todo list plugin for DeepSeek Harness: track tasks in a global ($DSH_HOME) or project (<projectRoot>/.dsh) level, with destructive actions requiring explicit confirmation",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./store": "./lib/store.js",
+    "./api": "./lib/api.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "client": {
+      "platform": "web"
+    }
+  }
+}
