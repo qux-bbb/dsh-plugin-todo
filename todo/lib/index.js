@@ -795,6 +795,14 @@ export async function listSessions(ctx, options, { limit = 25 } = {}) {
 
 /**
  * Create one ordinary session in the given working directory.
+ *
+ * The session is created through the workspace that owns the directory when the
+ * host has one: `sessionController.create` then attaches the new session to
+ * that workspace, so the sidebar files it under its project. Creating with a
+ * bare `cwd` instead makes the host open the session in the right directory but
+ * account it nowhere, which shows up as "未分组". The host accepts `workspaceId`
+ * *or* `cwd`, never both; the workspace already carries the canonical path, so
+ * naming it is enough.
  * @param {import('@deepseek-ai/cordis').Context} ctx - host context.
  * @param {{ cwd: string }} input - the working directory for the new session.
  * @returns {Promise<{ sessionId: string } | undefined>} the new session, or undefined without the service.
@@ -802,9 +810,61 @@ export async function listSessions(ctx, options, { limit = 25 } = {}) {
 export async function createSession(ctx, { cwd }) {
   const controller = sessionControllerOf(ctx)
   if (controller === undefined || typeof controller.create !== 'function') return undefined
-  const created = await controller.create({ cwd })
+  const workspaceId = await workspaceIdForCwd(ctx, cwd)
+  const created = await controller.create(workspaceId === undefined ? { cwd } : { workspaceId })
   const sessionId = created?.sessionId
   return typeof sessionId === 'string' && sessionId.length > 0 ? { sessionId } : undefined
+}
+
+/**
+ * The registered workspace that owns one directory, when there is one.
+ *
+ * `workspaceRegistry.resolveByPath` canonicalizes both sides through
+ * `fs.realpath` — the same canon the registry stores and compares on — and
+ * rejects for a path that does not resolve, so an unresolvable or unowned
+ * directory simply reports "no workspace" and the caller keeps using `cwd`.
+ * A host without `resolveByPath` still exposes the list projection, which is
+ * compared as-is after trimming trailing separators (and folding case on
+ * Windows, where paths are case-insensitive).
+ * @param {import('@deepseek-ai/cordis').Context} ctx - host context.
+ * @param {string} cwd - the requested working directory.
+ * @returns {Promise<string | undefined>} the workspace id, or undefined when no workspace owns the path.
+ */
+async function workspaceIdForCwd(ctx, cwd) {
+  const registry = typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : undefined
+  if (registry === undefined || typeof cwd !== 'string' || cwd.trim().length === 0) return undefined
+  try {
+    if (typeof registry.resolveByPath === 'function') {
+      const workspace = await registry.resolveByPath(cwd)
+      return workspaceIdOf(workspace)
+    }
+    if (typeof registry.list !== 'function') return undefined
+    const wanted = comparablePath(cwd)
+    const owner = registry.list().find((workspace) => comparablePath(workspace?.path) === wanted)
+    return workspaceIdOf(owner)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * One workspace's id, when the record carries a non-empty one.
+ * @param {unknown} workspace - a workspace entity from the registry.
+ * @returns {string | undefined} the id.
+ */
+function workspaceIdOf(workspace) {
+  const id = workspace === null || workspace === undefined ? undefined : workspace.id
+  return typeof id === 'string' && id.length > 0 ? id : undefined
+}
+
+/**
+ * One directory path in the spelling the fallback list comparison uses.
+ * @param {unknown} path - a path from the registry or a request.
+ * @returns {string} the comparison key (empty for a non-string).
+ */
+function comparablePath(path) {
+  const text = typeof path === 'string' ? path.replace(/[\\/]+$/, '') : ''
+  return process.platform === 'win32' ? text.toLowerCase() : text
 }
 
 /**

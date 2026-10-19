@@ -292,6 +292,89 @@ describe('listSessions', () => {
   })
 })
 
+describe('createSession workspace attachment', () => {
+  /**
+   * A host stand-in with a session controller and a workspace registry.
+   * @param {object} [options] - registry shape.
+   * @param {Array<{ id?: string, path?: string }>} [options.workspaces] - registry list projection.
+   * @param {Function} [options.resolve] - `resolveByPath` stand-in; omitted removes the method.
+   * @returns {{ ctx: object, asked: object[] }} the context and the create inputs it received.
+   */
+  const hostWith = ({ workspaces = [], resolve } = {}) => {
+    const asked = []
+    const ctx = {
+      get: (key) => {
+        if (key === 'sessionController') return { create: async (input) => { asked.push(input); return { sessionId: 's-made' } } }
+        if (key === 'workspaceRegistry') {
+          return {
+            list: () => workspaces,
+            ...(resolve === undefined ? {} : { resolveByPath: async (path) => resolve(path, workspaces) }),
+          }
+        }
+        return undefined
+      },
+    }
+    return { ctx, asked }
+  }
+
+  it('names the workspace that owns the directory instead of a bare cwd', async () => {
+    const { ctx, asked } = hostWith({
+      workspaces: [{ id: 'w-1', path: 'D:\\work' }],
+      resolve: (path, workspaces) => workspaces.find((workspace) => workspace.path === path),
+    })
+    assert.deepEqual(await createSession(ctx, { cwd: 'D:\\work' }), { sessionId: 's-made' })
+    assert.deepEqual(asked, [{ workspaceId: 'w-1' }], 'the host refuses workspaceId and cwd together')
+    assert.equal('cwd' in asked[0], false)
+  })
+
+  it('keeps the cwd when no workspace owns it, the path does not resolve, or the id is unusable', async () => {
+    const unowned = hostWith({ workspaces: [], resolve: () => undefined })
+    await createSession(unowned.ctx, { cwd: 'D:\\work' })
+    assert.deepEqual(unowned.asked, [{ cwd: 'D:\\work' }])
+
+    // `resolveByPath` rejects for a path that does not exist; that is not a reason
+    // to refuse the session, only a reason not to claim a workspace.
+    const missing = hostWith({ resolve: () => { throw new Error('ENOENT: no such file or directory') } })
+    await createSession(missing.ctx, { cwd: 'D:\\gone' })
+    assert.deepEqual(missing.asked, [{ cwd: 'D:\\gone' }])
+
+    const unidentified = hostWith({ workspaces: [{ path: 'D:\\work' }], resolve: (path, workspaces) => workspaces.find((workspace) => workspace.path === path) })
+    await createSession(unidentified.ctx, { cwd: 'D:\\work' })
+    assert.deepEqual(unidentified.asked, [{ cwd: 'D:\\work' }], 'a record without an id cannot be attached to')
+  })
+
+  it('falls back to the list projection on a host without resolveByPath', async () => {
+    const listed = hostWith({ workspaces: [{ id: 'w-2', path: 'D:\\work\\' }] })
+    await createSession(listed.ctx, { cwd: 'D:\\work' })
+    assert.deepEqual(listed.asked, [{ workspaceId: 'w-2' }], 'a trailing separator still names the same directory')
+
+    const other = hostWith({ workspaces: [{ id: 'w-2', path: 'D:\\elsewhere' }] })
+    await createSession(other.ctx, { cwd: 'D:\\work' })
+    assert.deepEqual(other.asked, [{ cwd: 'D:\\work' }])
+
+    // Windows paths are case-insensitive, so the same directory in another case
+    // is still the same workspace; POSIX keeps the exact comparison.
+    const cased = hostWith({ workspaces: [{ id: 'w-4', path: 'D:\\WORK' }] })
+    await createSession(cased.ctx, { cwd: 'd:\\work' })
+    assert.deepEqual(
+      cased.asked,
+      process.platform === 'win32' ? [{ workspaceId: 'w-4' }] : [{ cwd: 'd:\\work' }],
+    )
+
+    // A registry that fails must not block the session: the fallback is a bare cwd.
+    const askedOnBroken = []
+    const broken = {
+      get: (key) => {
+        if (key === 'sessionController') return { create: async (input) => { askedOnBroken.push(input); return { sessionId: 's-made' } } }
+        if (key === 'workspaceRegistry') return { list: () => { throw new Error('storage offline') } }
+        return undefined
+      },
+    }
+    assert.deepEqual(await createSession(broken, { cwd: 'D:\\work' }), { sessionId: 's-made' })
+    assert.deepEqual(askedOnBroken, [{ cwd: 'D:\\work' }])
+  })
+})
+
 describe('deliverToAgent target resolution', () => {
   it('prefers the host session API, which also resumes a cold session', async () => {
     const calls = []
