@@ -373,6 +373,9 @@ describe('todo client bundle', () => {
     assert.equal(clientModule.actionLabel({ status: 'proposed' }, 'accept'), '确认接受')
     assert.equal(clientModule.actionLabel({ status: 'review' }, 'confirm'), '确认完成')
     assert.equal(clientModule.actionLabel({ status: 'done' }, 'reopen'), '重新打开')
+    // The edit action names the todo: its form changes title, detail,
+    // acceptance, priority, and tags, not one "detail" field.
+    assert.equal(clientModule.actionLabel({ status: 'open' }, 'update'), '编辑待办')
     // An unknown action falls back to its own name.
     assert.equal(clientModule.actionLabel({ status: 'open' }, 'mystery'), 'mystery')
 
@@ -507,6 +510,88 @@ describe('todo panel rendering', () => {
       assert.match(rendered, /交给 AI 完成/)
       // Real state replaced the empty-state text.
       assert.equal(rendered.includes('这里还没有待办。'), false)
+    } finally {
+      mount.unmount()
+      globalThis.fetch = previousFetch
+      clientModule.activeSession.id = null
+      clientModule.activeSession.cwd = null
+    }
+  })
+
+  it('names the expanded row\'s edit action 编辑待办', async () => {
+    const clientModule = loadClientModule()
+    const previousFetch = globalThis.fetch
+    const cwd = 'D:\\work\\proj'
+    const at = '2026-05-01T00:00:00.000Z'
+    const summary = (id, row) => ({
+      id,
+      scope: 'project',
+      preview: '',
+      acceptance: '',
+      tags: [],
+      question: null,
+      answerCount: 0,
+      submission: null,
+      accepted: null,
+      approval: null,
+      completion: null,
+      voided: null,
+      at,
+      updatedAt: at,
+      ...row,
+    })
+    const row = summary('p-open', { title: 'Write the tests', status: 'open', priority: 'high', origin: 'user', actions: ['request', 'complete', 'update', 'void'] })
+    const payload = {
+      level: 'both',
+      defaultScope: 'project',
+      cwd,
+      projectRoot: cwd,
+      current: { source: 'manual', path: cwd, projectRoot: cwd },
+      projects: [],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void'],
+      canDeliver: false,
+      levels: {
+        global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
+        project: {
+          scope: 'project',
+          enabled: true,
+          dir: `${cwd}\\.dsh\\todo`,
+          file: `${cwd}\\.dsh\\todo\\todos.jsonl`,
+          total: 1,
+          counts: { open: 1 },
+          todos: [row],
+        },
+      },
+    }
+    globalThis.fetch = async (url) => {
+      const address = String(url)
+      if (/\/todo\?/.test(address)) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, todo: { ...row, detail: '覆盖三个分支', acceptance: '测试通过', projectRoot: cwd, answers: [], history: [], file: payload.levels.project.file } }),
+        }
+      }
+      return { ok: true, status: 200, json: async () => payload }
+    }
+    clientModule.activeSession.id = null
+    clientModule.activeSession.cwd = null
+    const mount = createMount(clientModule.TodoPage)
+    try {
+      let tree = await mount.settle()
+      // The collapsed row never offered the edit action, so the new label is
+      // exclusively the expanded detail action.
+      assert.equal(texts(tree).includes('编辑待办'), false)
+
+      const head = elements(tree, 'div').find((node) => node.props.className === 'todoItemHead')
+      assert.ok(head !== undefined, 'the row head is what expands the detail')
+      head.props.onClick()
+      tree = await mount.settle()
+
+      const labels = elements(tree, 'button').map((button) => texts(button).join(''))
+      assert.ok(labels.includes('编辑待办'), `missing 编辑待办: ${labels.join(' | ')}`)
+      // The old label named the detail section instead of what the button edits.
+      assert.equal(texts(tree).includes('编辑详情'), false)
     } finally {
       mount.unmount()
       globalThis.fetch = previousFetch

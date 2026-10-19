@@ -95,7 +95,9 @@ window.__ModuleLoader__.load({
       answer: '回答',
       confirm: '确认完成',
       complete: '标记完成',
-      update: '编辑',
+      // The detail form edits the whole todo (title, detail, acceptance,
+      // priority, tags), so the label names the todo, not its detail section.
+      update: '编辑待办',
       void: '作废',
       reopen: '重新打开',
     }
@@ -1174,7 +1176,7 @@ window.__ModuleLoader__.load({
                       type: 'button',
                       disabled: busy,
                       onClick: () => runAction(record, 'update'),
-                    }, '编辑详情'),
+                    }, actionLabel(record, 'update')),
                     todo.status === 'blocked'
                       ? h('button', {
                         className: 'todoButton',
