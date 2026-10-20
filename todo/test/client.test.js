@@ -600,6 +600,64 @@ describe('todo panel rendering', () => {
     }
   })
 
+  it('labels every field in the manual-add form too', async () => {
+    const clientModule = loadClientModule()
+    const previousFetch = globalThis.fetch
+    const cwd = 'D:\\work\\proj'
+    const payload = {
+      level: 'both',
+      defaultScope: 'project',
+      cwd,
+      projectRoot: cwd,
+      current: { source: 'manual', path: cwd, projectRoot: cwd },
+      projects: [],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void'],
+      canDeliver: false,
+      levels: {
+        global: { scope: 'global', enabled: true, total: 0, counts: {}, todos: [] },
+        project: { scope: 'project', enabled: true, dir: `${cwd}\\.dsh\\todo`, file: `${cwd}\\.dsh\\todo\\todos.jsonl`, total: 0, counts: {}, todos: [] },
+      },
+    }
+    globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => payload })
+    clientModule.activeSession.id = null
+    clientModule.activeSession.cwd = null
+    const mount = createMount(clientModule.TodoPage)
+    try {
+      let tree = await mount.settle()
+      const toggle = elements(tree, 'button').find((button) => texts(button).join('') === '＋ 手动添加')
+      assert.ok(toggle !== undefined, 'the toolbar opens the composer')
+      toggle.props.onClick()
+      tree = await mount.settle()
+
+      const labels = elements(tree, 'label').filter((label) => label.props.className === 'todoFieldLabel')
+      assert.deepEqual(labels.map((label) => texts(label).join('')).sort(), ['优先级', '标签', '标题', '详细说明', '验收标准'].sort())
+      const controls = [...elements(tree, 'input'), ...elements(tree, 'textarea'), ...elements(tree, 'select')]
+      for (const label of labels) {
+        const control = controls.find((node) => node.props.id === label.props.htmlFor)
+        assert.ok(control !== undefined, `缺少与标签「${texts(label).join('')}」关联的输入框`)
+      }
+
+      // Typing in a box keeps every label: the field's name must not depend on
+      // the placeholder being visible.
+      const title = controls.find((node) => node.props.id === 'todo-add-title')
+      title.props.onChange({ target: { value: '一条新待办' } })
+      tree = await mount.settle()
+      const typed = elements(tree, 'input').find((node) => node.props.id === 'todo-add-title')
+      assert.equal(typed.props.value, '一条新待办')
+      const stillLabelled = elements(tree, 'label')
+        .filter((label) => label.props.className === 'todoFieldLabel')
+        .map((label) => texts(label).join(''))
+      assert.deepEqual(stillLabelled.sort(), ['优先级', '标签', '标题', '详细说明', '验收标准'].sort())
+      // The add button still says where the todo will land.
+      assert.ok(elements(tree, 'button').some((button) => texts(button).join('') === '添加到项目'))
+    } finally {
+      mount.unmount()
+      globalThis.fetch = previousFetch
+      clientModule.activeSession.id = null
+      clientModule.activeSession.cwd = null
+    }
+  })
+
   it('labels every edit field so a filled form still says what each box is', async () => {
     const clientModule = loadClientModule()
     const previousFetch = globalThis.fetch

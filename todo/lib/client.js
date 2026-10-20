@@ -248,6 +248,23 @@ window.__ModuleLoader__.load({
       return ACTION_LABELS[action] ?? action
     }
 
+    /**
+     * One labelled form control. Both forms the panel renders (manual add and
+     * edit) put their field name in a visible <label> tied to the control: a
+     * placeholder is gone as soon as the box has content, and the edit form
+     * opens with content already in every box.
+     * @param {string} id - the control's id, also the label's `for`.
+     * @param {string} label - the visible field name.
+     * @param {object} control - the input / textarea / select element.
+     * @param {string} [extraClass] - extra class on the wrapping row.
+     * @returns {object} the field row.
+     */
+    function labelledField(id, label, control, extraClass) {
+      return h('div', { className: extraClass === undefined ? 'todoField' : `todoField ${extraClass}` },
+        h('label', { className: 'todoFieldLabel', htmlFor: id }, label),
+        control)
+    }
+
     /** The last path segment of a directory path, for labels. */
     function folderName(path) {
       return String(path ?? '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(path ?? '')
@@ -861,40 +878,45 @@ window.__ModuleLoader__.load({
 
       if (adding) {
         children.push(h('div', { className: 'todoComposer', key: 'composer' },
-          h('input', {
+          labelledField('todo-add-title', '标题', h('input', {
+            id: 'todo-add-title',
             className: 'todoInput',
-            placeholder: '标题（必填）',
+            placeholder: '一句话说清要做什么（必填）',
             value: draft.title,
             autoFocus: true,
             onChange: (event) => setDraft({ ...draft, title: event.target.value }),
             onKeyDown: (event) => {
               if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void addTodo()
             },
-          }),
-          h('textarea', {
+          })),
+          labelledField('todo-add-detail', '详细说明', h('textarea', {
+            id: 'todo-add-detail',
             className: 'todoTextarea',
-            placeholder: '详细说明（可选）',
+            placeholder: '补充背景、范围和约束（可选）',
             value: draft.detail,
             onChange: (event) => setDraft({ ...draft, detail: event.target.value }),
-          }),
+          })),
           h('div', { className: 'todoToolbar' },
-            h('input', {
-              className: 'todoInput todoGrow',
-              placeholder: '验收标准：怎样算完成（建议填写）',
+            labelledField('todo-add-acceptance', '验收标准', h('input', {
+              id: 'todo-add-acceptance',
+              className: 'todoInput',
+              placeholder: '怎样算完成（建议填写）',
               value: draft.acceptance,
               onChange: (event) => setDraft({ ...draft, acceptance: event.target.value }),
-            }),
-            h('select', {
+            }), 'todoGrow'),
+            labelledField('todo-add-priority', '优先级', h('select', {
+              id: 'todo-add-priority',
               className: 'todoSelect',
               value: draft.priority,
               onChange: (event) => setDraft({ ...draft, priority: event.target.value }),
-            }, Object.keys(PRIORITY_META).map((priority) => h('option', { key: priority, value: priority }, `优先级：${PRIORITY_META[priority].label}`))),
-            h('input', {
+            }, Object.keys(PRIORITY_META).map((priority) => h('option', { key: priority, value: priority }, PRIORITY_META[priority].label)))),
+            labelledField('todo-add-tags', '标签', h('input', {
+              id: 'todo-add-tags',
               className: 'todoInput',
-              placeholder: '标签，用逗号分隔',
+              placeholder: '用逗号分隔',
               value: draft.tags,
               onChange: (event) => setDraft({ ...draft, tags: event.target.value }),
-            }),
+            }), 'todoGrow'),
             h('button', {
               className: 'todoButton',
               type: 'button',
@@ -1114,28 +1136,22 @@ window.__ModuleLoader__.load({
               // read-only detail above), and the priority select drops its inline
               // "优先级：" prefix because the label now names it.
               const fieldId = (field) => `todo-edit-${editing.id}-${field}`
-              const field = (key, label, control, extraClass) => h('div', {
-                className: extraClass === undefined ? 'todoField' : `todoField ${extraClass}`,
-                key,
-              },
-              h('label', { className: 'todoFieldLabel', htmlFor: fieldId(key) }, label),
-              control)
               rowsHtml.push(h('div', { className: 'todoDetail', key: 'edit' },
-                field('title', '标题', h('input', {
+                labelledField(fieldId('title'), '标题', h('input', {
                   id: fieldId('title'),
                   className: 'todoInput',
                   value: editing.title,
                   autoFocus: true,
                   onChange: (event) => setEditing({ ...editing, title: event.target.value }),
                 })),
-                field('detail', '详细说明', h('textarea', {
+                labelledField(fieldId('detail'), '详细说明', h('textarea', {
                   id: fieldId('detail'),
                   className: 'todoTextarea',
                   placeholder: '补充背景、范围和约束',
                   value: editing.detail,
                   onChange: (event) => setEditing({ ...editing, detail: event.target.value }),
                 })),
-                field('acceptance', '验收标准', h('textarea', {
+                labelledField(fieldId('acceptance'), '验收标准', h('textarea', {
                   id: fieldId('acceptance'),
                   className: 'todoTextarea',
                   placeholder: '怎样算完成（建议填写）',
@@ -1147,13 +1163,13 @@ window.__ModuleLoader__.load({
                   },
                 })),
                 h('div', { className: 'todoToolbar' },
-                  field('priority', '优先级', h('select', {
+                  labelledField(fieldId('priority'), '优先级', h('select', {
                     id: fieldId('priority'),
                     className: 'todoSelect',
                     value: editing.priority,
                     onChange: (event) => setEditing({ ...editing, priority: event.target.value }),
                   }, Object.keys(PRIORITY_META).map((priority) => h('option', { key: priority, value: priority }, PRIORITY_META[priority].label)))),
-                  field('tags', '标签', h('input', {
+                  labelledField(fieldId('tags'), '标签', h('input', {
                     id: fieldId('tags'),
                     className: 'todoInput',
                     placeholder: '用逗号分隔',
