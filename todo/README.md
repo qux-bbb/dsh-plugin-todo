@@ -13,7 +13,8 @@ import 'dsh-plugin-todo/client'                    // 浏览器半（经典脚�
 - 模型工具：`todo_propose` / `todo_list` / `todo_get` / `todo_claim` / `todo_update` / `todo_submit` / `todo_complete` / `todo_void`。
 - 人类命令：`/todo [add <标题> | done <id> | show <id>]`。
 - 面板：侧边栏「待办」图标 + 中央 `main` 页面，数据走同进程的 `/api/todo` 路由。
-  「交给 AI 完成」会先让你选**投递到哪条会话**（`当前会话` / 宿主列出的其他会话 / `新建会话`）；
+  「交给 AI 完成」会先让你选**投递到哪条会话**（`当前会话` / `新建会话` / 其他会话；
+  其他会话按最近更新排序，刚新建的那条排在最前）；
   全局待办还能再选**哪个项目**（既是会话列表的过滤条件，也是新会话的工作目录）。
 
 两条不可绕过的规则（由 `lib/store.js` 的转换表强制，两端共用同一份代码）：

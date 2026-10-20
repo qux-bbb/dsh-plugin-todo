@@ -75,15 +75,17 @@ describe('GET /sessions', () => {
     assert.equal(answer.body.projectRoot, api.cwd)
   })
 
-  it('flags the sessions that live in the panel\'s project and filters by query', async () => {
+  it('flags the sessions that live in the panel\'s project, answers newest first, and filters by query', async () => {
     const asked = []
     const api = makeApi('sessions-list', {
       createSession: async () => ({ sessionId: 'new' }),
       listSessions: async (input) => {
         asked.push(input)
+        // Deliberately oldest-first: the payload order is the API's contract, so
+        // the picker must not depend on whichever order an adapter reports.
         return [
-          { id: 's-1', title: '当前对话', cwd: api.cwd, projectRoot: api.cwd, updatedAt: 3, running: false, agentAvailable: true },
           { id: 's-2', title: '另一个项目', cwd: 'D:\\elsewhere', projectRoot: 'D:\\elsewhere', updatedAt: 2, running: true, agentAvailable: true },
+          { id: 's-1', title: '当前对话', cwd: api.cwd, projectRoot: api.cwd, updatedAt: 3, running: false, agentAvailable: true },
         ]
       },
     })
@@ -91,6 +93,7 @@ describe('GET /sessions', () => {
     assert.equal(all.body.canList, true)
     assert.equal(all.body.canCreate, true)
     assert.deepEqual(asked, [{ limit: 25 }], 'the default limit reaches the host')
+    assert.deepEqual(all.body.sessions.map((session) => session.id), ['s-1', 's-2'], 'the most recent session leads the picker')
     assert.deepEqual(all.body.sessions.map((session) => session.sameProject), [true, false])
     assert.equal(all.body.sessions[0].title, '当前对话')
 
@@ -267,10 +270,25 @@ describe('listSessions', () => {
     assert.equal(sessions[1].agentAvailable, false)
   })
 
-  it('caps the list, ignores junk rows, and degrades when the service is missing or broken', async () => {
+  it('orders the rows newest activity first, then caps the list', async () => {
     const rows = Array.from({ length: 5 }, (_value, index) => ({ sessionId: `s-${index}`, cwd: `D:\\w\\p${index}`, updatedAt: index }))
+    // The cap keeps the newest sessions, so a session created just before the
+    // picker opens can never be sliced away by an older host order.
     const capped = await listSessions(hostWith(rows), options, { limit: 2 })
-    assert.deepEqual(capped.map((session) => session.id), ['s-0', 's-1'])
+    assert.deepEqual(capped.map((session) => session.id), ['s-4', 's-3'])
+
+    const shuffled = [
+      { sessionId: 's-old', cwd: 'D:\\w\\old', updatedAt: 1 },
+      { sessionId: 's-new', cwd: 'D:\\w\\new', updatedAt: 50 },
+      { sessionId: 's-mid', cwd: 'D:\\w\\mid', updatedAt: 20 },
+    ]
+    const ordered = await listSessions(hostWith(shuffled), options, { limit: 10 })
+    assert.deepEqual(ordered.map((session) => session.id), ['s-new', 's-mid', 's-old'], 'the newest session leads the hand-off list')
+    assert.deepEqual(
+      (await listSessions(hostWith(shuffled), options, { limit: 1 })).map((session) => session.id),
+      ['s-new'],
+      'the limit keeps the newest session, not the host\'s first row',
+    )
 
     const junk = await listSessions(hostWith([null, 'nope', { sessionId: 42, cwd: null }]), options, {})
     assert.deepEqual(junk, [], 'a row without a usable id is dropped')
@@ -426,6 +444,20 @@ describe('client hand-off helpers', () => {
     assert.equal(options[0].disabled, false)
     assert.equal(options[2].label, '另一个 · 运行中')
     assert.equal(options[3].label, '旧对话 · 需恢复')
+
+    // A session created just before the picker opened leads the list, whatever
+    // order the payload rows arrived in; rows without a timestamp keep their
+    // order because the sort is stable.
+    const fresh = client.targetOptions({
+      currentId: 's-current',
+      sessions: [
+        { id: 's-old', title: '旧', updatedAt: 10 },
+        { id: 's-fresh', title: '刚建的', updatedAt: 90 },
+        { id: 's-mid', title: '中间', updatedAt: 40 },
+      ],
+      canCreate: true,
+    })
+    assert.deepEqual(fresh.map((option) => option.value), ['current', 'new', 'session:s-fresh', 'session:s-mid', 'session:s-old'])
 
     // Without a session of its own the current choice is disabled, and without a
     // create capability there is no "new session" option at all.

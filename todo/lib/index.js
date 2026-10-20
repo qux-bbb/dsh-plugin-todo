@@ -745,6 +745,11 @@ function sessionControllerOf(ctx) {
  * The conversations the panel may hand a todo to: every ordinary session the
  * host knows, newest activity first, with the project each one belongs to.
  *
+ * The order is applied here as well as in the panel API because `limit` must
+ * keep the newest sessions, not whichever rows the host happened to return
+ * first: the user has just created a session in the picker's top slot, and a
+ * cap applied to an unsorted host list would drop it.
+ *
  * Subagent sessions are filtered out — they are not conversations the user can
  * address. `undefined` (not `[]`) reports "this deployment cannot list
  * sessions", which the panel renders as "current session only" instead of an
@@ -769,7 +774,6 @@ export async function listSessions(ctx, options, { limit = 25 } = {}) {
     .filter((item) => item !== null && typeof item === 'object')
     .filter((item) => item.origin !== 'subagent')
     .filter((item) => item.parentSessionId === undefined || item.parentSessionId === null)
-    .slice(0, wanted)
     .map((item) => {
       // A session id is a branded string; anything else is not an addressable
       // conversation, and handing a todo to it would fail later for no good reason.
@@ -791,6 +795,8 @@ export async function listSessions(ctx, options, { limit = 25 } = {}) {
       }
     })
     .filter((session) => session.id.length > 0)
+    .sort((left, right) => (right.updatedAt - left.updatedAt) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    .slice(0, wanted)
 }
 
 /**

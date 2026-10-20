@@ -314,6 +314,22 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Order the listed sessions newest activity first.
+     *
+     * The panel API already promises this order; sorting again here keeps the
+     * picker correct while a reloaded host half is paired with a browser half
+     * that still holds an older payload, and makes "the session I just created"
+     * the first pickable row rather than the last. The sort is stable, so rows
+     * without a usable timestamp keep the order they arrived in.
+     * @param {Array<object>} sessions - sessions from the panel API.
+     * @returns {Array<object>} the same rows, newest first.
+     */
+    function byRecency(sessions) {
+      const stamp = (session) => (typeof session?.updatedAt === 'number' ? session.updatedAt : 0)
+      return [...sessions].sort((left, right) => stamp(right) - stamp(left))
+    }
+
+    /**
      * Every choice the picker offers. The current value is always present: a
      * `<select>` whose value matches no option silently shows the first one, and
      * that would hand the todo to a conversation the user did not pick.
@@ -331,7 +347,7 @@ window.__ModuleLoader__.load({
         disabled: currentId === null || currentId === undefined,
       }]
       if (canCreate === true) options.push({ value: 'new', label: '新建会话' })
-      for (const session of sessions) {
+      for (const session of byRecency(sessions)) {
         if (currentId !== null && currentId !== undefined && session.id === currentId) continue
         options.push({ value: sessionTargetValue(session.id), label: sessionLabel(session), title: session.cwd ?? session.id })
       }

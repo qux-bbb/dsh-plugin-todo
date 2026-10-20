@@ -55,6 +55,26 @@ export class ApiError extends Error {
 }
 
 /**
+ * Order session rows newest activity first.
+ *
+ * The hand-off picker renders these rows in payload order, and the session the
+ * user just created (or just handed a todo to) must lead the list, not trail
+ * it. Sorting here keeps that contract even when the host adapter — or a
+ * deployment that injects another adapter — reports the rows in another order.
+ * @param {Record<string, unknown>} left - one session row.
+ * @param {Record<string, unknown>} right - another session row.
+ * @returns {number} the comparator result.
+ */
+function bySessionRecency(left, right) {
+  const leftAt = typeof left?.updatedAt === 'number' ? left.updatedAt : 0
+  const rightAt = typeof right?.updatedAt === 'number' ? right.updatedAt : 0
+  if (leftAt !== rightAt) return rightAt - leftAt
+  const leftId = String(left?.id ?? '')
+  const rightId = String(right?.id ?? '')
+  return leftId < rightId ? -1 : leftId > rightId ? 1 : 0
+}
+
+/**
  * Read one string field.
  * @param {unknown} value - raw field value.
  * @param {string} field - field name for the error message.
@@ -257,7 +277,8 @@ export function createTodoApi({ storeFor, listProjects = () => [], admit, resolv
    * none (headless, SDK) the panel still offers the current session and the
    * prepared prompt, so `canList`/`canCreate` drive the UI instead of failing.
    * Subagent sessions are filtered out by the host: they are not conversations
-   * the user can hand work to.
+   * the user can hand work to. The payload is always newest activity first, so
+   * a freshly created session is the first addressable row.
    * @param {{ projectRoot: string }} current - the project this request resolved to.
    * @param {number | undefined} limit - maximum sessions returned.
    * @param {string | undefined} query - case-insensitive filter over title and cwd.
@@ -283,7 +304,7 @@ export function createTodoApi({ storeFor, listProjects = () => [], admit, resolv
       ok: true,
       canList: true,
       canCreate: typeof createSession === 'function',
-      sessions: items.map((session) => ({
+      sessions: [...items].sort(bySessionRecency).map((session) => ({
         ...session,
         sameProject: session.projectRoot !== null && session.projectRoot !== undefined && session.projectRoot === current.projectRoot,
       })),
