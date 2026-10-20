@@ -600,6 +600,100 @@ describe('todo panel rendering', () => {
     }
   })
 
+  it('labels every edit field so a filled form still says what each box is', async () => {
+    const clientModule = loadClientModule()
+    const previousFetch = globalThis.fetch
+    const cwd = 'D:\\work\\proj'
+    const at = '2026-05-01T00:00:00.000Z'
+    const summary = (id, row) => ({
+      id,
+      scope: 'project',
+      preview: '',
+      acceptance: '',
+      tags: [],
+      question: null,
+      answerCount: 0,
+      submission: null,
+      accepted: null,
+      approval: null,
+      completion: null,
+      voided: null,
+      at,
+      updatedAt: at,
+      ...row,
+    })
+    const row = summary('p-open', { title: 'Write the tests', status: 'open', priority: 'high', origin: 'user', tags: ['ui'], actions: ['request', 'complete', 'update', 'void'] })
+    const file = `${cwd}\\.dsh\\todo\\todos.jsonl`
+    const record = { ...row, detail: '覆盖三个分支', acceptance: '测试通过', projectRoot: cwd, answers: [], history: [], file }
+    const payload = {
+      level: 'both',
+      defaultScope: 'project',
+      cwd,
+      projectRoot: cwd,
+      current: { source: 'manual', path: cwd, projectRoot: cwd },
+      projects: [],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void'],
+      canDeliver: false,
+      levels: {
+        global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
+        project: {
+          scope: 'project',
+          enabled: true,
+          dir: `${cwd}\\.dsh\\todo`,
+          file,
+          total: 1,
+          counts: { open: 1 },
+          todos: [row],
+        },
+      },
+    }
+    globalThis.fetch = async (url) => {
+      if (/\/todo\?/.test(String(url))) return { ok: true, status: 200, json: async () => ({ ok: true, todo: record }) }
+      return { ok: true, status: 200, json: async () => payload }
+    }
+    clientModule.activeSession.id = null
+    clientModule.activeSession.cwd = null
+    const mount = createMount(clientModule.TodoPage)
+    try {
+      let tree = await mount.settle()
+      const head = elements(tree, 'div').find((node) => node.props.className === 'todoItemHead')
+      assert.ok(head !== undefined, 'the row head expands the detail')
+      head.props.onClick()
+      tree = await mount.settle()
+      const edit = elements(tree, 'button').find((button) => texts(button).join('') === '编辑待办')
+      assert.ok(edit !== undefined, 'the expanded row offers the edit action')
+      edit.props.onClick({})
+      tree = await mount.settle()
+
+      // Every edit control is named by a visible <label>, not by a placeholder
+      // that disappears as soon as the box has content.
+      const labels = elements(tree, 'label').filter((label) => label.props.className === 'todoFieldLabel')
+      assert.deepEqual(labels.map((label) => texts(label).join('')).sort(), ['优先级', '标签', '标题', '详细说明', '验收标准'].sort())
+      const controls = [...elements(tree, 'input'), ...elements(tree, 'textarea'), ...elements(tree, 'select')]
+      for (const label of labels) {
+        const control = controls.find((node) => node.props.id === label.props.htmlFor)
+        assert.ok(control !== undefined, `缺少与标签「${texts(label).join('')}」关联的输入框`)
+      }
+
+      // The filled-in values are still there, each under its own label.
+      const byId = (field) => controls.find((node) => node.props.id === `todo-edit-p-open-${field}`)
+      assert.equal(byId('title').props.value, 'Write the tests')
+      assert.equal(byId('detail').props.value, '覆盖三个分支')
+      assert.equal(byId('acceptance').props.value, '测试通过')
+      assert.equal(byId('tags').props.value, 'ui')
+      assert.equal(byId('priority').props.value, 'high')
+      // Saving and cancelling stay available next to the labelled fields.
+      const buttons = elements(tree, 'button').map((button) => texts(button).join(''))
+      assert.ok(buttons.includes('保存'))
+      assert.ok(buttons.includes('取消'))
+    } finally {
+      mount.unmount()
+      globalThis.fetch = previousFetch
+      clientModule.activeSession.id = null
+      clientModule.activeSession.cwd = null
+    }
+  })
+
   it('offers a session picker for the hand-off and sends to the picked conversation', async () => {
     const clientModule = loadClientModule()
     const requests = []

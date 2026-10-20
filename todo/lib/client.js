@@ -1108,41 +1108,59 @@ window.__ModuleLoader__.load({
             }
 
             if (isEditing) {
+              // The edit form opens with the todo's current values filled in, so a
+              // placeholder cannot say what a box is once it has content. Every
+              // control therefore carries a visible, associated label (same as the
+              // read-only detail above), and the priority select drops its inline
+              // "优先级：" prefix because the label now names it.
+              const fieldId = (field) => `todo-edit-${editing.id}-${field}`
+              const field = (key, label, control, extraClass) => h('div', {
+                className: extraClass === undefined ? 'todoField' : `todoField ${extraClass}`,
+                key,
+              },
+              h('label', { className: 'todoFieldLabel', htmlFor: fieldId(key) }, label),
+              control)
               rowsHtml.push(h('div', { className: 'todoDetail', key: 'edit' },
-                h('input', {
+                field('title', '标题', h('input', {
+                  id: fieldId('title'),
                   className: 'todoInput',
                   value: editing.title,
                   autoFocus: true,
                   onChange: (event) => setEditing({ ...editing, title: event.target.value }),
-                }),
-                h('textarea', {
+                })),
+                field('detail', '详细说明', h('textarea', {
+                  id: fieldId('detail'),
                   className: 'todoTextarea',
-                  placeholder: '详细说明',
+                  placeholder: '补充背景、范围和约束',
                   value: editing.detail,
                   onChange: (event) => setEditing({ ...editing, detail: event.target.value }),
-                }),
-                h('textarea', {
+                })),
+                field('acceptance', '验收标准', h('textarea', {
+                  id: fieldId('acceptance'),
                   className: 'todoTextarea',
-                  placeholder: '验收标准',
+                  placeholder: '怎样算完成（建议填写）',
                   value: editing.acceptance,
                   onChange: (event) => setEditing({ ...editing, acceptance: event.target.value }),
                   onKeyDown: (event) => {
                     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void saveEdit()
                     if (event.key === 'Escape') setEditing(null)
                   },
-                }),
+                })),
                 h('div', { className: 'todoToolbar' },
-                  h('select', {
+                  field('priority', '优先级', h('select', {
+                    id: fieldId('priority'),
                     className: 'todoSelect',
                     value: editing.priority,
                     onChange: (event) => setEditing({ ...editing, priority: event.target.value }),
-                  }, Object.keys(PRIORITY_META).map((priority) => h('option', { key: priority, value: priority }, `优先级：${PRIORITY_META[priority].label}`))),
-                  h('input', {
-                    className: 'todoInput todoGrow',
-                    placeholder: '标签，用逗号分隔',
+                  }, Object.keys(PRIORITY_META).map((priority) => h('option', { key: priority, value: priority }, PRIORITY_META[priority].label)))),
+                  field('tags', '标签', h('input', {
+                    id: fieldId('tags'),
+                    className: 'todoInput',
+                    placeholder: '用逗号分隔',
                     value: editing.tags,
                     onChange: (event) => setEditing({ ...editing, tags: event.target.value }),
-                  }),
+                  }), 'todoGrow')),
+                h('div', { className: 'todoToolbar' },
                   h('button', { className: 'todoButton', type: 'button', 'data-primary': 'true', disabled: busy, onClick: () => void saveEdit() }, '保存'),
                   h('button', { className: 'todoButton', type: 'button', onClick: () => setEditing(null) }, '取消'))))
             } else {
