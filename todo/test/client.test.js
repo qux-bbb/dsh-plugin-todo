@@ -357,15 +357,15 @@ describe('todo client bundle', () => {
     assert.equal(clientModule.matchesFilter({ status: 'open' }, 'open'), true)
     assert.equal(clientModule.matchesFilter({ status: 'open' }, 'done'), false)
     for (const status of ['proposed', 'review', 'blocked']) assert.equal(clientModule.matchesFilter({ status }, 'attention'), true)
-    for (const status of ['open', 'working', 'confirmed', 'done', 'void']) assert.equal(clientModule.matchesFilter({ status }, 'attention'), false)
+    for (const status of ['open', 'working', 'done', 'void']) assert.equal(clientModule.matchesFilter({ status }, 'attention'), false)
     // The three group tabs are the whole toolbar: no tab per status any more.
     assert.deepEqual(clientModule.FILTERS, ['attention', 'progress', 'all'])
-    for (const status of ['open', 'working', 'confirmed']) assert.equal(clientModule.matchesFilter({ status }, 'progress'), true)
+    for (const status of ['open', 'working']) assert.equal(clientModule.matchesFilter({ status }, 'progress'), true)
     for (const status of ['proposed', 'review', 'blocked', 'done', 'void']) assert.equal(clientModule.matchesFilter({ status }, 'progress'), false)
     // A single status stays filterable even without its own tab.
     assert.equal(clientModule.matchesFilter({ status: 'void' }, 'void'), true)
     assert.equal(clientModule.isAttention({ status: 'review' }), true)
-    assert.equal(clientModule.isAttention({ status: 'confirmed' }), false)
+    assert.equal(clientModule.isAttention({ status: 'done' }), false)
 
     assert.equal(clientModule.actionLabel({ status: 'review' }, 'reject'), '打回重做')
     assert.equal(clientModule.actionLabel({ status: 'proposed' }, 'reject'), '驳回')
@@ -403,6 +403,29 @@ describe('todo client bundle', () => {
     assert.equal(state.levels.project.total, 7)
     const withGlobal = clientModule.mergeLevel(state, { scope: 'global', enabled: true, total: 1, counts: {}, todos: [] })
     assert.equal(withGlobal.levels.global.total, 1)
+  })
+
+  it('covers exactly the seven statuses and keeps progress to open/working', () => {
+    const clientModule = loadClientModule()
+    // The state machine has seven statuses: `confirmed` was removed because a
+    // user confirmation now completes the todo directly, so the panel must not
+    // reintroduce a badge or a tab for it.
+    assert.deepEqual(
+      Object.keys(clientModule.STATUS_META).sort(),
+      ['blocked', 'done', 'open', 'proposed', 'review', 'void', 'working'],
+    )
+    // `review` is the human decision point: the row hint says the confirmation
+    // itself completes the todo.
+    assert.match(clientModule.STATUS_META.review.hint, /确认即完成/)
+    // The progress tab is the two not-yet-attention statuses, no archived one.
+    const progress = clientModule.FILTER_GROUPS.find((group) => group.id === 'progress')
+    assert.deepEqual(progress.statuses, ['open', 'working'])
+    // Each grouped status belongs to exactly one tab (done/void live only in `all`).
+    const grouped = clientModule.FILTER_GROUPS
+      .filter((group) => group.statuses !== null)
+      .flatMap((group) => group.statuses)
+    assert.deepEqual([...grouped].sort(), ['blocked', 'open', 'proposed', 'review', 'working'])
+    assert.equal(new Set(grouped).size, grouped.length, 'no status is covered by two tabs')
   })
 })
 
@@ -461,7 +484,7 @@ describe('todo panel rendering', () => {
       projectRoot: cwd,
       current: { source: 'manual', path: cwd, projectRoot: cwd },
       projects: [],
-      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void'],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
       canDeliver: true,
       levels: {
         global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
@@ -471,7 +494,7 @@ describe('todo panel rendering', () => {
           dir: 'D:\\work\\proj\\.dsh\\todo',
           file: 'D:\\work\\proj\\.dsh\\todo\\todos.jsonl',
           total: 2,
-          counts: { proposed: 1, open: 1, review: 0, blocked: 0, working: 0, confirmed: 0, done: 0, void: 0 },
+          counts: { proposed: 1, open: 1, review: 0, blocked: 0, working: 0, done: 0, void: 0 },
           todos: [
             summary('p-proposed', { title: 'Add dark mode', status: 'proposed', priority: 'normal', origin: 'ai', actions: ['accept', 'complete', 'update', 'void'] }),
             summary('p-open', { title: 'Write the tests', status: 'open', priority: 'high', origin: 'user', actions: ['request', 'complete', 'update', 'void'] }),
@@ -548,7 +571,7 @@ describe('todo panel rendering', () => {
       projectRoot: cwd,
       current: { source: 'manual', path: cwd, projectRoot: cwd },
       projects: [],
-      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void'],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
       canDeliver: false,
       levels: {
         global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
@@ -611,7 +634,7 @@ describe('todo panel rendering', () => {
       projectRoot: cwd,
       current: { source: 'manual', path: cwd, projectRoot: cwd },
       projects: [],
-      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void'],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
       canDeliver: false,
       levels: {
         global: { scope: 'global', enabled: true, total: 0, counts: {}, todos: [] },
@@ -690,7 +713,7 @@ describe('todo panel rendering', () => {
       projectRoot: cwd,
       current: { source: 'manual', path: cwd, projectRoot: cwd },
       projects: [],
-      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void'],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
       canDeliver: false,
       levels: {
         global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
@@ -782,7 +805,7 @@ describe('todo panel rendering', () => {
       dir: cwd,
       file: `${cwd}\\.dsh\\todo\\todos.jsonl`,
       total: 1,
-      counts: { proposed: 0, open: 1, review: 0, blocked: 0, working: 0, confirmed: 0, done: 0, void: 0 },
+      counts: { proposed: 0, open: 1, review: 0, blocked: 0, working: 0, done: 0, void: 0 },
       todos: [summary('p-open', { title: 'Write the tests', status: 'open', priority: 'high', origin: 'user', actions: ['request', 'complete', 'update', 'void'] })],
     }
     const state = {
@@ -792,7 +815,7 @@ describe('todo panel rendering', () => {
       projectRoot: cwd,
       current: { source: 'manual', path: cwd, projectRoot: cwd },
       projects: [{ path: otherRoot, title: 'other' }],
-      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void'],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
       canDeliver: true,
       levels: { global: { scope: 'global', enabled: true, total: 0, counts: {}, todos: [] }, project: level },
     }

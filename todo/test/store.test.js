@@ -185,6 +185,8 @@ describe('normalization helpers', () => {
     assert.equal(normalizePriority('urgent'), 'normal')
     assert.equal(normalizeStatus('review'), 'review')
     assert.equal(normalizeStatus('archived'), 'open')
+    // `confirmed` was removed from the state machine; history still reads it.
+    assert.equal(normalizeStatus('confirmed'), 'done')
   })
 
   it('validates required and optional text against a length cap', () => {
@@ -417,11 +419,6 @@ describe('TodoStore.list', () => {
     await store.act({ id: review.id, action: 'claim', actor: 'ai' })
     await store.act({ id: review.id, action: 'submit', actor: 'ai', summary: 'done?' })
     ids.review = review.id
-    const confirmed = await user('confirmed one')
-    await store.act({ id: confirmed.id, action: 'claim', actor: 'ai' })
-    await store.act({ id: confirmed.id, action: 'submit', actor: 'ai', summary: 'done?' })
-    await store.act({ id: confirmed.id, action: 'confirm', actor: 'user' })
-    ids.confirmed = confirmed.id
     const done = await user('done one')
     await store.act({ id: done.id, action: 'complete', actor: 'user' })
     ids.done = done.id
@@ -435,10 +432,10 @@ describe('TodoStore.list', () => {
     const { store } = await everyStatus('list-order')
     const listed = await store.list({ limit: 0 })
     assert.deepEqual(listed.todos.map((todo) => todo.status), [
-      'proposed', 'review', 'blocked', 'working', 'confirmed', 'open', 'done', 'void',
+      'proposed', 'review', 'blocked', 'working', 'open', 'done', 'void',
     ])
-    assert.equal(listed.total, 8)
-    assert.equal(listed.returned, 8)
+    assert.equal(listed.total, 7)
+    assert.equal(listed.returned, 7)
     assert.equal(listed.truncated, false)
     assert.deepEqual(listed.scopes, ['global', 'project'])
     for (const todo of listed.todos) assert.equal(todo.file, store.fileFor('project'))
@@ -475,7 +472,7 @@ describe('TodoStore.list', () => {
     assert.equal(proposed.todos[0].status, 'proposed')
 
     const all = await store.list({ status: 'all', limit: 0 })
-    assert.equal(all.total, 8)
+    assert.equal(all.total, 7)
 
     await assert.rejects(() => store.list({ status: 'archived' }), TodoError)
     await assert.rejects(() => store.list({ status: 'archived' }), /unknown status/)
@@ -619,42 +616,42 @@ describe('TodoStore.act — rule 1: only the user accepts a proposal', () => {
 })
 
 describe('TodoStore.act — rule 2: nothing is done without a user confirmation', () => {
-  it('refuses a model `complete` from every status except confirmed', async () => {
+  it('refuses a model `complete` from every status', async () => {
     const cwd = await dir('rule-complete-ai')
     const store = makeStore(cwd, { now: clock() })
     const open = (await store.create({ items: [{ title: 'open' }] })).todos[0]
     const proposed = (await store.create({ items: [{ title: 'proposed' }], origin: 'ai' })).todos[0]
 
-    await assert.rejects(() => store.act({ id: open.id, action: 'complete', actor: 'ai' }), /the model cannot mark it done/)
-    await assert.rejects(() => store.act({ id: proposed.id, action: 'complete', actor: 'ai' }), /is proposed: the model cannot mark it done/)
+    await assert.rejects(() => store.act({ id: open.id, action: 'complete', actor: 'ai' }), /not allowed for actor ai/)
+    await assert.rejects(() => store.act({ id: proposed.id, action: 'complete', actor: 'ai' }), /not allowed for actor ai/)
     assert.equal((await store.get({ id: open.id })).status, 'open')
 
-    // After the user confirms, the model's completion is allowed.
+    // Even after a submission the model has no completion path: only the user
+    // finishes a todo, and that action carries the confirmation.
     await store.act({ id: open.id, action: 'claim', actor: 'ai' })
     await store.act({ id: open.id, action: 'submit', actor: 'ai', summary: 'finished' })
+    await assert.rejects(() => store.act({ id: open.id, action: 'complete', actor: 'ai' }), /not allowed for actor ai/)
     await store.act({ id: open.id, action: 'confirm', actor: 'user' })
-    const completed = await store.act({ id: open.id, action: 'complete', actor: 'ai' })
-    assert.equal(completed.todo.status, 'done')
-    assert.equal(completed.todo.approval.by, 'user')
-    assert.equal(completed.todo.completion.by, 'ai')
+    const todo = await store.get({ id: open.id })
+    assert.equal(todo.status, 'done')
+    assert.equal(todo.approval.by, 'user')
+    assert.equal(todo.completion.by, 'user')
   })
 
-  it('lets the user complete from proposed, open, working, blocked, review, and confirmed', async () => {
+  it('lets the user complete a todo that was never submitted', async () => {
     const cwd = await dir('rule-complete-user')
     const store = makeStore(cwd, { now: clock() })
-    /** Reach one status as a user action, then complete from it. */
+    /** Reach one status a user can complete from, then complete it. */
     const reachable = async (status) => {
       const created = status === 'proposed'
         ? (await store.create({ items: [{ title: `from ${status}` }], origin: 'ai' })).todos[0]
         : (await store.create({ items: [{ title: `from ${status}` }] })).todos[0]
-      if (status === 'working' || status === 'review' || status === 'confirmed') await store.act({ id: created.id, action: 'claim', actor: 'ai' })
+      if (status === 'working') await store.act({ id: created.id, action: 'claim', actor: 'ai' })
       if (status === 'blocked') await store.act({ id: created.id, action: 'ask', actor: 'ai', question: 'q' })
-      if (status === 'review' || status === 'confirmed') await store.act({ id: created.id, action: 'submit', actor: 'ai', summary: 's' })
-      if (status === 'confirmed') await store.act({ id: created.id, action: 'confirm', actor: 'user' })
       return created.id
     }
 
-    for (const status of ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed']) {
+    for (const status of ['proposed', 'open', 'working', 'blocked']) {
       const id = await reachable(status)
       assert.equal((await store.get({ id })).status, status)
       const result = await store.act({ id, action: 'complete', actor: 'user' })
@@ -667,23 +664,46 @@ describe('TodoStore.act — rule 2: nothing is done without a user confirmation'
     }
   })
 
-  it('refuses `complete` from done and void for both actors', async () => {
+  it('completes a submitted result on `confirm`, recording approval and completion', async () => {
+    const cwd = await dir('rule-confirm')
+    const store = makeStore(cwd, { now: clock() })
+    const created = (await store.create({ items: [{ title: 'submitted' }] })).todos[0]
+    await store.act({ id: created.id, action: 'claim', actor: 'ai' })
+    await store.act({ id: created.id, action: 'submit', actor: 'ai', summary: 's', evidence: 'e' })
+
+    const confirmed = await store.act({ id: created.id, action: 'confirm', actor: 'user', note: '看过了' })
+    assert.equal(confirmed.todo.status, 'done')
+    assert.equal(confirmed.todo.approval.by, 'user')
+    assert.equal(confirmed.todo.approval.note, '看过了')
+    assert.equal(confirmed.todo.completion.by, 'user')
+    assert.equal(confirmed.todo.completion.note, '看过了')
+    assert.equal(confirmed.todo.history.at(-1).action, 'confirm')
+    assert.equal(confirmed.todo.history.at(-1).to, 'done')
+  })
+
+  it('refuses `complete` from review, done, and void', async () => {
     const cwd = await dir('rule-complete-terminal')
     const store = makeStore(cwd)
     const done = (await store.create({ items: [{ title: 'done' }] })).todos[0]
     await store.act({ id: done.id, action: 'complete', actor: 'user' })
     const voided = (await store.create({ items: [{ title: 'void' }] })).todos[0]
     await store.act({ id: voided.id, action: 'void', actor: 'user' })
+    const review = (await store.create({ items: [{ title: 'review' }] })).todos[0]
+    await store.act({ id: review.id, action: 'claim', actor: 'ai' })
+    await store.act({ id: review.id, action: 'submit', actor: 'ai', summary: 's' })
 
+    await assert.rejects(() => store.act({ id: review.id, action: 'complete', actor: 'user' }), /confirm the submitted result instead/)
     await assert.rejects(() => store.act({ id: done.id, action: 'complete', actor: 'user' }), /already done/)
-    await assert.rejects(() => store.act({ id: done.id, action: 'complete', actor: 'ai' }), /the model cannot mark it done/)
+    await assert.rejects(() => store.act({ id: done.id, action: 'complete', actor: 'ai' }), /not allowed for actor ai/)
     await assert.rejects(() => store.act({ id: voided.id, action: 'complete', actor: 'user' }), /already void/)
-    await assert.rejects(() => store.act({ id: voided.id, action: 'complete', actor: 'ai' }), /the model cannot mark it done/)
+    await assert.rejects(() => store.act({ id: voided.id, action: 'complete', actor: 'ai' }), /not allowed for actor ai/)
+    // A refused action never moved the review todo.
+    assert.equal((await store.get({ id: review.id })).status, 'review')
   })
 })
 
 describe('TodoStore.act — the happy path', () => {
-  it('walks propose → accept → claim → ask → answer → submit → confirm → complete', async () => {
+  it('walks propose → accept → claim → ask → answer → submit → confirm', async () => {
     const cwd = await dir('act-happy')
     const store = makeStore(cwd, { now: clock() })
     const id = (await store.create({ items: [{ title: 'ship it' }], origin: 'ai' })).todos[0].id
@@ -711,13 +731,10 @@ describe('TodoStore.act — the happy path', () => {
     assert.equal(submitted.todo.submission.summary, 'pushed to main')
     assert.equal(submitted.todo.submission.evidence, 'commit abc')
 
-    const confirmed = await store.act({ id, action: 'confirm', actor: 'user' })
-    assert.equal(confirmed.todo.status, 'confirmed')
-    assert.equal(confirmed.todo.approval.by, 'user')
-
-    const completed = await store.act({ id, action: 'complete', actor: 'ai' })
+    const completed = await store.act({ id, action: 'confirm', actor: 'user' })
     assert.equal(completed.todo.status, 'done')
     assert.equal(completed.todo.approval.by, 'user')
+    assert.equal(completed.todo.completion.by, 'user')
 
     // One history entry per transition, each naming who did what to whom.
     const todo = await store.get({ id })
@@ -728,8 +745,7 @@ describe('TodoStore.act — the happy path', () => {
       ['ask', 'working', 'blocked', 'ai'],
       ['answer', 'blocked', 'working', 'user'],
       ['submit', 'working', 'review', 'ai'],
-      ['confirm', 'review', 'confirmed', 'user'],
-      ['complete', 'confirmed', 'done', 'ai'],
+      ['confirm', 'review', 'done', 'user'],
     ])
     for (const entry of todo.history) assert.equal(typeof entry.at, 'string')
   })
@@ -1060,20 +1076,20 @@ describe('summaries and action tables', () => {
     assert.deepEqual(availableActions('open', 'user'), ['request', 'complete', 'update', 'void'])
     assert.deepEqual(availableActions('working', 'user'), ['request', 'complete', 'update', 'void'])
     assert.deepEqual(availableActions('blocked', 'user'), ['answer', 'request', 'complete', 'update', 'void'])
-    assert.deepEqual(availableActions('review', 'user'), ['confirm', 'complete', 'reject', 'update', 'void'])
-    assert.deepEqual(availableActions('confirmed', 'user'), ['complete', 'reopen', 'void'])
+    assert.deepEqual(availableActions('review', 'user'), ['confirm', 'reject', 'update', 'void'])
     assert.deepEqual(availableActions('done', 'user'), ['reopen'])
     assert.deepEqual(availableActions('void', 'user'), ['reopen'])
     // The panel asks as the user; an unknown status simply offers nothing.
     assert.deepEqual(availableActions('proposed'), ['accept', 'complete', 'update', 'void'])
     assert.deepEqual(availableActions('nonsense'), [])
 
-    // The model may not accept its own proposal nor confirm its own result.
+    // The model may not accept its own proposal nor confirm its own result, and
+    // it has no `complete` action anywhere.
     assert.deepEqual(availableActions('proposed', 'ai'), ['update', 'void'])
     assert.deepEqual(availableActions('review', 'ai'), ['update', 'void'])
-    assert.deepEqual(availableActions('confirmed', 'ai'), ['complete', 'update', 'void'])
     assert.deepEqual(availableActions('done', 'ai'), [])
     assert.deepEqual(availableActions('void', 'ai'), [])
+    for (const status of STATUSES) assert.ok(!availableActions(status, 'ai').includes('complete'), `the model is offered complete (${status})`)
     // The returned list is a copy, so a caller cannot corrupt the table.
     availableActions('open', 'user').push('hacked')
     assert.deepEqual(availableActions('open', 'user'), ['request', 'complete', 'update', 'void'])
@@ -1081,7 +1097,7 @@ describe('summaries and action tables', () => {
 
   it('marks exactly the statuses that wait for a human decision', () => {
     assert.deepEqual(STATUSES.filter((status) => needsAttention(status)), ['proposed', 'blocked', 'review'])
-    for (const status of ['open', 'working', 'confirmed', 'done', 'void']) assert.equal(needsAttention(status), false)
+    for (const status of ['open', 'working', 'done', 'void']) assert.equal(needsAttention(status), false)
   })
 
   it('projects a todo onto a compact row without the full detail', async () => {

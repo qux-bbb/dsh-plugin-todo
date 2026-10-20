@@ -220,6 +220,26 @@ describe('handleTodoCommand', () => {
     assert.match(added.text, /Added/)
   })
 
+  it('completes a submitted todo through the confirmation instead of a completion', async () => {
+    const store = makeStore('command-done-review')
+    await store.create({ items: [{ title: 'submitted review' }], origin: 'user' })
+    const id = (await store.list({ limit: 0 })).todos[0].id
+    await store.act({ id, action: 'claim', actor: 'ai' })
+    await store.act({ id, action: 'submit', actor: 'ai', summary: 'finished it' })
+    assert.equal((await store.get({ id })).status, 'review')
+
+    // `review` is completed by the user's confirmation, which the command must
+    // pick instead of `complete` — `complete` is refused from `review`.
+    const done = await handleTodoCommand(store, `done ${id}`)
+    assert.equal(done.kind, 'success')
+    assert.match(done.text, new RegExp(`Marked ${id} done: submitted review`))
+    const todo = await store.get({ id })
+    assert.equal(todo.status, 'done')
+    assert.equal(todo.approval.by, 'user')
+    assert.equal(todo.completion.by, 'user')
+    assert.equal(todo.history.at(-1).action, 'confirm')
+  })
+
   it('shows one todo in full, including the actions open to the user', async () => {
     const store = makeStore('command-show')
     await store.create({ items: [{ title: 'inspect me', detail: 'a long detail', acceptance: 'green' }] })

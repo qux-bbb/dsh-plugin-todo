@@ -39,15 +39,14 @@ window.__ModuleLoader__.load({
     /**
      * Status presentation: how one todo explains its own state. The row badge,
      * not a filter tab, is what names the status — one tab per status turned the
-     * toolbar into a row of mostly-empty buttons, and a todo in `review` showed
-     * up under both `待我处理` and `待确认完成` at the same time.
+     * toolbar into a row of mostly-empty buttons, and a status covered by two
+     * tabs showed up twice. One entry per status; the state machine has seven.
      */
     const STATUS_META = {
       proposed: { label: '待你接受', hint: 'AI 提出的待办，需要你确认后才生效' },
-      review: { label: '待你确认', hint: 'AI 说做完了，等你确认结果' },
+      review: { label: '待你确认', hint: 'AI 说做完了，你确认即完成' },
       blocked: { label: '待你补充', hint: 'AI 缺信息，等你回答' },
       working: { label: 'AI 进行中', hint: 'AI 正在处理' },
-      confirmed: { label: '已确认，待收尾', hint: '你已确认结果，等收尾标记完成' },
       open: { label: '待办', hint: '还没开始' },
       done: { label: '已完成', hint: '已完成' },
       void: { label: '已作废', hint: '已作废' },
@@ -66,8 +65,8 @@ window.__ModuleLoader__.load({
       {
         id: 'progress',
         label: '进行中',
-        hint: '待办 · AI 进行中 · 已确认待收尾 — 还在流转，暂时不需要你操作',
-        statuses: ['open', 'working', 'confirmed'],
+        hint: '待办 · AI 进行中 — 还在流转，暂时不需要你操作',
+        statuses: ['open', 'working'],
       },
       {
         id: 'all',

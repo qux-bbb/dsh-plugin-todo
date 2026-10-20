@@ -81,9 +81,8 @@ function makeApi(name, { level = 'both', defaultScope = 'project', projects = []
     }
     await store.act({ id, action: 'submit', actor: 'ai', summary: 'finished' })
     if (status === 'review') return
+    // A confirmation *is* the completion now: `review` → `done` in one user action.
     await store.act({ id, action: 'confirm', actor: 'user' })
-    if (status === 'confirmed') return
-    await store.act({ id, action: 'complete', actor: 'ai' })
     if (status !== 'done') throw new Error(`cannot reach ${status}`)
   }
   return {
@@ -320,8 +319,10 @@ describe('todo api /prompt', () => {
     assert.match(prompt, /执行流程/)
     assert.ok(prompt.includes('todo_get'))
     assert.ok(prompt.includes('todo_submit'))
-    assert.ok(prompt.includes('todo_complete'))
-    assert.match(prompt, /用户确认之前不能把待办标记成已完成/)
+    // The model has no completion tool: the user's panel confirmation completes it.
+    assert.equal(prompt.includes('todo_complete'), false)
+    assert.match(prompt, /用户确认你的提交后/)
+    assert.match(prompt, /你没有把待办标记完成的工具/)
   })
 
   it('requires the id and answers 404 for an unknown one', async () => {
@@ -428,28 +429,43 @@ describe('todo api /action', () => {
     assert.equal(accepted.status, 200)
     assert.equal(accepted.body.todo.status, 'open')
 
-    // `complete` only works for the user from `review`; the body cannot claim
-    // to be the model to skip that rule.
+    // A submitted todo is completed by the user's confirmation; the body cannot
+    // claim to be the model to skip that rule.
     const [job] = await api.seed([{ title: 'job' }], { origin: 'user' })
     await api.reach(job.id, 'review')
-    const completed = await api.send('POST', '/action', {
-      body: { project: api.cwd, id: job.id, action: 'complete', actor: 'ai' },
+    const confirmed = await api.send('POST', '/action', {
+      body: { project: api.cwd, id: job.id, action: 'confirm', actor: 'ai' },
     })
-    assert.equal(completed.status, 200)
-    assert.equal(completed.body.todo.status, 'done')
+    assert.equal(confirmed.status, 200)
+    assert.equal(confirmed.body.todo.status, 'done')
     const stored = await api.storeFor(api.cwd).get({ id: job.id })
     assert.equal(stored.approval.by, 'user')
     assert.equal(stored.completion.by, 'user')
+
+    // `complete` is not a way out of `review`, whoever the body claims to be.
+    const [other] = await api.seed([{ title: 'other job' }], { origin: 'user' })
+    await api.reach(other.id, 'review')
+    const refused = await api.send('POST', '/action', {
+      body: { project: api.cwd, id: other.id, action: 'complete', actor: 'ai' },
+    })
+    assert.equal(refused.status, 400)
+    assert.match(refused.body.error, /confirm the submitted result/)
+    assert.equal((await api.storeFor(api.cwd).get({ id: other.id })).status, 'review')
   })
 
-  it('confirms a submitted result as the user', async () => {
+  it('confirms a submitted result as the user, which completes it', async () => {
     const api = makeApi('action-confirm')
     const [job] = await api.seed([{ title: 'submitted' }], { origin: 'user' })
     await api.reach(job.id, 'review')
     const response = await api.send('POST', '/action', { body: { project: api.cwd, id: job.id, action: 'confirm' } })
     assert.equal(response.status, 200)
-    assert.equal(response.body.todo.status, 'confirmed')
-    assert.equal((await api.storeFor(api.cwd).get({ id: job.id })).approval.by, 'user')
+    assert.equal(response.body.todo.status, 'done')
+    assert.equal(response.body.counts.done, 1)
+    assert.equal(response.body.counts.review, 0)
+    const stored = await api.storeFor(api.cwd).get({ id: job.id })
+    assert.equal(stored.approval.by, 'user')
+    assert.equal(stored.completion.by, 'user')
+    assert.equal(stored.submission.summary, 'finished')
   })
 
   it('records an answer and returns the todo to working', async () => {

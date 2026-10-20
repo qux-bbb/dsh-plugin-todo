@@ -9,9 +9,9 @@
  * Two routes are not plain CRUD:
  *
  * - `POST /action` runs the workflow machine in `store.js` as the `user` actor.
- *   That is the only way a todo becomes `open` (accept a proposal) or
- *   `confirmed` (confirm a submitted result), which is what makes the model's
- *   own completion path safe.
+ *   That is the only way a todo becomes `open` (accept a proposal) or `done`
+ *   (confirm a submitted result — that confirmation *is* the completion, so the
+ *   model has no completion path of its own).
  * - `POST /request` hands one todo to the model: the host delivers a user-role
  *   message into the live session (see the host half) and the panel reports
  *   whether it was delivered. When it cannot be delivered the prepared prompt is
@@ -147,8 +147,8 @@ export function buildRequestPrompt({ todo, projectRoot }) {
     `1. 先调用 todo_get(id="${todo.id}") 读取服务端最新详情。`,
     '2. 判断信息是否足够完成这条待办。如果不够，先向用户提问获取必要信息；也可以调用 todo_update(id, question="...") 把缺少什么记录到待办上，用户会在待办面板里回答。信息补全后再继续。',
     `3. 信息足够后调用 todo_claim(id="${todo.id}") 表示开始处理，然后完成它。`,
-    '4. 完成后调用 todo_submit(id, summary="...", evidence="...") 提交结果，并请用户在待办面板确认。',
-    '   注意：用户确认之前不能把待办标记成已完成；用户确认后调用 todo_complete(id) 收尾。',
+    '4. 完成后调用 todo_submit(id, summary="...", evidence="...") 提交结果——这是你最后一步，然后请用户在待办面板确认。',
+    '   注意：待办只能由用户在面板里标记完成。用户确认你的提交后，待办会直接变成已完成；你没有把待办标记完成的工具。',
     `5. 如果这条待办不该做，调用 todo_void(id="${todo.id}", reason="...") 说明原因。`,
   )
   return lines.join('\n')

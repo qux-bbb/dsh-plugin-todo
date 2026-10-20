@@ -5,13 +5,12 @@
  * finished on its own:
  *
  * - `todo_propose` adds todos in `proposed`: the user accepts them in the panel.
- * - `todo_claim` starts one, `todo_update` records questions and answers when
- *   the todo does not carry enough information yet, `todo_submit` reports the
- *   result as `review`.
- * - `todo_complete` only works once the user confirmed the result (`confirmed`),
- *   so nothing ever reaches `done` without a recorded user confirmation. The
- *   user can also mark a todo done directly in the panel — that action *is* the
- *   confirmation.
+ * - `todo_claim` starts one, and `todo_update` records questions and answers
+ *   when the todo does not carry enough information yet.
+ * - `todo_submit` reports the result as `review` and is the model's last step:
+ *   the user's confirmation in the panel completes the todo. There is no
+ *   `todo_complete` tool, so the model has no path to `done` at all — every
+ *   `done` carries a recorded user action.
  * - `todo_void` cancels a todo with a reason, and `todo_update`/`todo_list`/
  *   `todo_get` read the list back.
  *
@@ -190,7 +189,7 @@ export function renderClaim(todo, prefix = 'todo') {
     'Before doing the work, decide whether this todo carries enough information to finish it correctly.',
     'If it does not, ask the user — either in the conversation, or by recording the missing information with',
     `\`${prefix}_update\`(id="${todo.id}", question="..."): the user answers in the todo panel and \`${prefix}_get\` shows it back.`,
-    `When the todo is done, call \`${prefix}_submit\`(id="${todo.id}", summary="..."). You cannot mark it done: the user confirms first.`,
+    `When the todo is done, call \`${prefix}_submit\`(id="${todo.id}", summary="..."). You cannot mark it done: the user confirms your submission in the todo panel, and that confirmation completes it.`,
   )
   return lines.join('\n')
 }
@@ -570,7 +569,7 @@ export function apply(ctx, config = {}) {
 
   ctx.tools.register(defineTool({
     name: tool('submit'),
-    description: 'Report that you finished a todo: moves it to `review` and asks the user to confirm the result. You still cannot mark it done — after the user confirms (`confirmed`) call `todo_complete`. Tell the user what you did and that the todo is waiting for their confirmation.',
+    description: 'Report that you finished a todo: moves it to `review` and asks the user to confirm the result. You never mark it done — the user\'s confirmation in the todo panel completes it. Tell the user what you did and that the todo is waiting for their confirmation.',
     parameters: {
       id: { type: 'string', required: true, description: 'Todo id.' },
       scope: { type: 'string', enum: [...SCOPES], description: 'Level holding the todo; omitted locates it by id.' },
@@ -590,7 +589,7 @@ export function apply(ctx, config = {}) {
       },
       render: (_args, value) => [{
         type: 'text',
-        text: `Submitted ${value.id} — "${value.title}" is now \`review\`.\nWhat you reported: ${value.summary}\nThe todo is waiting for the user's confirmation in the todo panel. Do not mark it done; after the user confirms, call \`${'todo_complete'}\` with this id.`,
+        text: `Submitted ${value.id} — "${value.title}" is now \`review\`.\nWhat you reported: ${value.summary}\nThe todo is waiting for the user's confirmation in the todo panel. Do not mark it done — the user's confirmation completes it.`,
       }],
     },
     async execute(args, exec) {
@@ -601,43 +600,6 @@ export function apply(ctx, config = {}) {
       return { id: result.todo.id, status: result.todo.status, title: result.todo.title, summary: result.todo.submission.summary }
     },
     presentCall: (args) => ({ card: 'generic', title: 'Todo: submit for confirmation', kind: 'other', rawInput: args.id }),
-  }))
-
-  ctx.tools.register(defineTool({
-    name: tool('complete'),
-    description: 'Mark one todo `done`. This only works when the user already confirmed the submitted result (status `confirmed`); a todo in any other status is refused, because completing one always requires the user\'s confirmation. Check the status with `todo_get` before calling it, and only call it for the todo the user just confirmed.',
-    parameters: {
-      id: { type: 'string', required: true, description: 'Todo id.' },
-      scope: { type: 'string', enum: [...SCOPES], description: 'Level holding the todo; omitted locates it by id.' },
-      note: { type: 'string', description: 'Optional closing note recorded in the todo history.' },
-    },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          id: { type: 'string', required: true },
-          status: { type: 'string', required: true },
-          title: { type: 'string', required: true },
-          approvedAt: { type: 'string' },
-        },
-      },
-      render: (_args, value) => [{
-        type: 'text',
-        text: `Marked ${value.id} — "${value.title}" as \`done\` (the user confirmed it${value.approvedAt ? ` at ${value.approvedAt}` : ''}).`,
-      }],
-    },
-    async execute(args, exec) {
-      const result = await storeFor(cwdOf(exec)).act({ id: args.id, scope: args.scope, action: 'complete', actor: 'ai', note: args.note })
-      const todo = result.todo
-      return {
-        id: todo.id,
-        status: todo.status,
-        title: todo.title,
-        ...(todo.approval === null ? {} : { approvedAt: todo.approval.at }),
-      }
-    },
-    presentCall: (args) => ({ card: 'generic', title: 'Todo: mark done', kind: 'other', rawInput: args.id }),
   }))
 
   ctx.tools.register(defineTool({
@@ -970,7 +932,8 @@ function resolveLiveAgent(ctx, sessionId) {
 /**
  * The `/todo` command: list, add, finish, or inspect one todo. Everything the
  * command does is a *user* action, so it may accept a proposal and mark a todo
- * done directly.
+ * done — a submitted todo is completed by the user's confirmation, any other one
+ * by the user's direct completion.
  * @param {TodoStore} store - the invoking session's store.
  * @param {string} rawInput - the text after `/todo`.
  * @returns {Promise<{ kind: 'success' | 'error', text: string }>} the command result.
@@ -1000,7 +963,12 @@ export async function handleTodoCommand(store, rawInput) {
     }
     if (verb === 'done') {
       if (argument.length === 0) return { kind: 'error', text: '用法：/todo done <id>' }
-      const result = await store.act({ id: argument, action: 'complete', actor: 'user', note: 'marked done from /todo' })
+      // A submitted todo (`review`) is completed by the user's confirmation;
+      // anything earlier is completed directly. Both are user actions, so the
+      // command may run either — but never the model's own completion.
+      const current = await store.get({ id: argument })
+      const action = current?.status === 'review' ? 'confirm' : 'complete'
+      const result = await store.act({ id: argument, action, actor: 'user', note: 'marked done from /todo' })
       return { kind: 'success', text: `Marked ${result.todo.id} done: ${result.todo.title}` }
     }
     if (verb === 'show') {

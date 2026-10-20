@@ -7,10 +7,11 @@
  * workflow through the real `ctx.tools.execute` pipeline and the real panel API:
  *
  *   model proposes → user accepts → model claims → model asks → user answers →
- *   model submits → user confirms → model completes
+ *   model submits → user confirms in the panel (which completes the todo)
  *
  * plus the two rules the plugin exists for: the model can neither accept its own
- * proposal nor mark anything done before the user confirmed it.
+ * proposal nor mark anything done — there is no model completion path at all,
+ * so the user's confirmation is the only way into `done`.
  *
  * Run from this repository (the bundled runtime works too):
  *   node scripts/smoke-runtime.mjs
@@ -71,8 +72,8 @@ try {
   await ctx.plugin(todo, { globalDir, defaultScope: 'project', projectRootMarkers: [] })
 
   const expected = [
-    'todo_claim', 'todo_complete', 'todo_get', 'todo_list',
-    'todo_propose', 'todo_submit', 'todo_update', 'todo_void',
+    'todo_claim', 'todo_get', 'todo_list', 'todo_propose',
+    'todo_submit', 'todo_update', 'todo_void',
   ]
   const schemas = ctx.tools.schemas().map((schema) => schema.name).sort()
   assert.deepEqual(schemas, expected)
@@ -128,21 +129,24 @@ try {
   assert.equal(answered.body.todo.answerCount, 1)
   console.log('✓ model asked for missing information, user answered, todo returned to `working`')
 
-  // --- 5. the model submits; it still cannot complete ----------------------
+  // --- 5. the model submits; it has no completion path ---------------------
   const submitted = await call(ctx, 'todo_submit', { id: first, summary: 'README 补了两级安装说明', evidence: 'README.md +40 行' })
   assert.equal(submitted.value.status, 'review')
   assert.match(submitted.content[0].text, /waiting for the user's confirmation/)
-  const tooEarly = await call(ctx, 'todo_complete', { id: first }, { expectError: true })
-  assert.match(tooEarly.error.message, /cannot mark it done/)
-  console.log('✓ todo_submit moved it to `review` and the model was refused completion')
+  const inReview = await call(ctx, 'todo_get', { id: first })
+  assert.equal(inReview.value.status, 'review')
+  assert.deepEqual(inReview.value.availableActions, ['update', 'void'], 'a review todo offers the model no completion')
+  assert.equal(inReview.value.availableActions.includes('complete'), false, 'todo_complete is gone: the model cannot complete anything')
+  console.log('✓ todo_submit moved it to `review`; the model has no `complete` action at all')
 
-  // --- 6. the user confirms, then the model completes ----------------------
+  // --- 6. the panel confirmation IS the completion -------------------------
   const confirmed = await panel(api, 'POST', '/action', withProject({ id: first, action: 'confirm', note: '看过了' }))
-  assert.equal(confirmed.body.todo.status, 'confirmed')
-  const completed = await call(ctx, 'todo_complete', { id: first })
-  assert.equal(completed.value.status, 'done')
-  assert.equal(completed.value.approvedAt, confirmed.body.todo.approval.at)
-  console.log('✓ the user confirmed, and only then did the model mark it done')
+  assert.equal(confirmed.status, 200)
+  assert.equal(confirmed.body.todo.status, 'done', 'a user confirmation completes the todo in one step')
+  assert.equal(confirmed.body.todo.approval.by, 'user')
+  assert.equal(confirmed.body.todo.completion.by, 'user')
+  assert.deepEqual(confirmed.body.todo.actions, ['reopen'], 'a done todo is reopened, never confirmed again')
+  console.log('✓ the user confirmed in the panel, which completed the todo in one step')
 
   // --- 7. the user can also add and finish a todo directly ------------------
   const added = await panel(api, 'POST', '/todos', withProject({ title: '手动加的一条', acceptance: '面板里能看到' }))
@@ -178,7 +182,7 @@ try {
   assert.equal(state.status, 200)
   assert.equal(state.body.levels.project.enabled, true)
   assert.equal(state.body.levels.global.enabled, true)
-  assert.equal(state.body.statuses.length, 8)
+  assert.equal(state.body.statuses.length, 7, '`confirmed` is gone: seven statuses remain')
   assert.equal(state.body.canDeliver, false, 'no deliverRequest was injected in this API instance')
   const summaries = state.body.levels.project.todos
   assert.equal(summaries.length, 3)

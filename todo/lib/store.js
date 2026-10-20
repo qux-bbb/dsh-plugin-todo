@@ -13,10 +13,10 @@
  *
  * 1. A todo the model proposed is not a todo yet — a user must accept it
  *    (`proposed` → `open`).
- * 2. A todo is never marked `done` without a recorded user confirmation. The
- *    model can only run `confirmed` → `done` (after the user confirmed the
- *    submitted result); the user may run any → `done`, and that very action is
- *    the confirmation, recorded on the todo.
+ * 2. A todo is never marked `done` without a recorded user confirmation, and
+ *    only the user can mark one done: `confirm` on a submitted result, or
+ *    `complete` on a todo that was never submitted. Either action *is* the
+ *    confirmation and is recorded on the todo; the model has no path to `done`.
  *
  * Every mutation is a whole-file atomic rewrite (`.tmp` + rename) serialized
  * per file path, so two stores pointed at the same file cannot interleave.
@@ -40,12 +40,11 @@ export const LEVELS = ['global', 'project', 'both']
  * - `open`      — a real todo, not started.
  * - `working`   — the model (or the user) started it.
  * - `blocked`   — started, but more information is needed from the user.
- * - `review`    — the model reports it finished; awaiting the user's confirmation.
- * - `confirmed` — the user confirmed the result; whoever marks it runs `done`.
- * - `done`      — completed.
+ * - `review`    — the model reports it finished; the user confirms, which completes it.
+ * - `done`      — completed, always with the user's recorded confirmation.
  * - `void`      — cancelled / withdrawn, kept for the record.
  */
-export const STATUSES = ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed', 'done', 'void']
+export const STATUSES = ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void']
 /** Statuses a todo never leaves on its own. */
 export const TERMINAL_STATUSES = ['done', 'void']
 /** Todo priorities, highest first. */
@@ -75,7 +74,7 @@ export const DEFAULT_LIST_LIMIT = 50
 export const MAX_BATCH = 50
 
 /** Listing order: what needs a human first, what is finished last. */
-const STATUS_RANK = { proposed: 0, review: 1, blocked: 2, working: 3, confirmed: 4, open: 5, done: 6, void: 7 }
+const STATUS_RANK = { proposed: 0, review: 1, blocked: 2, working: 3, open: 4, done: 5, void: 6 }
 /** Priority ordering inside one status rank. */
 const PRIORITY_RANK = { high: 0, normal: 1, low: 2 }
 
@@ -99,8 +98,7 @@ const USER_ACTIONS = {
   open: ['request', 'complete', 'update', 'void'],
   working: ['request', 'complete', 'update', 'void'],
   blocked: ['answer', 'request', 'complete', 'update', 'void'],
-  review: ['confirm', 'complete', 'reject', 'update', 'void'],
-  confirmed: ['complete', 'reopen', 'void'],
+  review: ['confirm', 'reject', 'update', 'void'],
   done: ['reopen'],
   void: ['reopen'],
 }
@@ -108,7 +106,8 @@ const USER_ACTIONS = {
 /**
  * The actions the model may run, per status. Deliberately empty for `proposed`
  * (a user must accept it) and for `review` (a user must confirm it) apart from
- * withdrawal / bookkeeping, which is the whole point of the plugin.
+ * withdrawal / bookkeeping, which is the whole point of the plugin. There is no
+ * `complete` anywhere: only the user finishes a todo.
  */
 const AI_ACTIONS = {
   proposed: ['update', 'void'],
@@ -116,7 +115,6 @@ const AI_ACTIONS = {
   working: ['ask', 'submit', 'update', 'void'],
   blocked: ['ask', 'answer', 'submit', 'update', 'void'],
   review: ['update', 'void'],
-  confirmed: ['complete', 'update', 'void'],
   done: [],
   void: [],
 }
@@ -132,16 +130,20 @@ const TRANSITIONS = {
   ask: { from: ['proposed', 'open', 'working', 'blocked'], to: 'blocked', actors: ['ai', 'user', 'system'] },
   answer: { from: ['blocked'], to: 'working', actors: ['ai', 'user', 'system'] },
   submit: { from: ['working', 'blocked'], to: 'review', actors: ['ai'] },
-  confirm: { from: ['review'], to: 'confirmed', actors: ['user'] },
+  confirm: { from: ['review'], to: 'done', actors: ['user'] },
   reject: { from: ['proposed', 'review'], to: null, actors: ['user'] },
-  complete: { from: ['confirmed'], to: 'done', actors: ['ai', 'user'] },
-  reopen: { from: ['done', 'void', 'confirmed', 'review', 'proposed'], to: 'open', actors: ['user'] },
+  complete: { from: ['proposed', 'open', 'working', 'blocked'], to: 'done', actors: ['user'] },
+  reopen: { from: ['done', 'void', 'review', 'proposed'], to: 'open', actors: ['user'] },
   void: { from: STATUSES.filter((status) => status !== 'void'), to: 'void', actors: ['ai', 'user'] },
   update: { from: STATUSES.filter((status) => status !== 'void'), to: null, actors: ['ai', 'user', 'system'] },
 }
 
-/** The statuses the user may complete directly (its own action is the confirmation). */
-const USER_COMPLETABLE = ['proposed', 'open', 'working', 'blocked', 'review', 'confirmed']
+/**
+ * The statuses the user may complete directly: for a todo that was never
+ * submitted, the user's own completion *is* the confirmation. A `review` todo
+ * is completed with `confirm` instead, so `review` has exactly one way out.
+ */
+const USER_COMPLETABLE = ['proposed', 'open', 'working', 'blocked']
 
 /**
  * The actions available for one status and actor.
@@ -308,11 +310,16 @@ export function normalizePriority(value) {
 
 /**
  * Normalize a status read back from disk.
+ *
+ * `confirmed` was a status before the state machine dropped it: a user
+ * confirmation now completes the todo directly. Historical records still spell
+ * it that way, so they are mapped forward instead of being lost.
  * @param {unknown} value - raw status.
  * @returns {string} a known status, defaulting to `open`.
  */
 export function normalizeStatus(value) {
-  return STATUSES.includes(value) ? value : 'open'
+  if (STATUSES.includes(value)) return value
+  return value === 'confirmed' ? 'done' : 'open'
 }
 
 /**
@@ -628,8 +635,9 @@ export class TodoStore {
    * plugin are enforced here:
    *
    * - the model may not accept its own proposal (`proposed` → `open` is a user action);
-   * - the model may only complete a todo the user already confirmed, so a `done`
-   *   todo always carries a recorded user confirmation.
+   * - only the user can reach `done` (`confirm` from `review`, `complete` from a
+   *   status that was never submitted), so a `done` todo always carries a
+   *   recorded user confirmation.
    * @param {object} input - action input.
    * @param {string} input.id - todo id.
    * @param {string} input.action - one of the action names in {@link availableActions}.
@@ -753,17 +761,16 @@ export class TodoStore {
     }
     const note = optionalText(input.note, 'note', this.maxDetailLength) || null
 
-    // `complete` carries the confirmation rules: the model only completes a todo
-    // the user already confirmed, the user completes whatever it wants and that
-    // action *is* the confirmation.
+    // `complete` is the user's shortcut for a todo that was never submitted: the
+    // user's own completion *is* the confirmation. A submitted todo (`review`) is
+    // completed with `confirm`, so `review` has exactly one way out.
     if (action === 'complete') {
-      if (by === 'ai' && previous.status !== 'confirmed') {
+      if (!USER_COMPLETABLE.includes(previous.status)) {
         throw new TodoError(
-          `todo ${JSON.stringify(previous.id)} is ${previous.status}: the model cannot mark it done. Submit the result with \`submit\` and let the user confirm it first (the user may confirm in the panel, or mark it done directly).`,
+          previous.status === 'review'
+            ? `todo ${JSON.stringify(previous.id)} is in review: confirm the submitted result instead of marking it done`
+            : `todo ${JSON.stringify(previous.id)} is already ${previous.status}`,
         )
-      }
-      if (by !== 'ai' && !USER_COMPLETABLE.includes(previous.status)) {
-        throw new TodoError(`todo ${JSON.stringify(previous.id)} is already ${previous.status}`)
       }
     } else if (action === 'reject') {
       // Rejecting a proposal cancels it; rejecting a submission sends it back.
@@ -807,7 +814,17 @@ export class TodoStore {
         })
       }
       case 'confirm':
-        return this.#transition(previous, { action, to: 'confirmed', by, at, note, patch: { approval: { at, by: 'user', note } } })
+        // The confirmation is the completion: `review` → `done` in one step, with
+        // the user's approval and completion recorded together.
+        return this.#transition(previous, {
+          action, to: 'done', by, at, note,
+          patch: {
+            completion: { at, by, note },
+            approval: { at, by: 'user', note },
+            accepted: previous.accepted ?? { at, by: 'user', note: 'the user confirmed the result' },
+            question: null,
+          },
+        })
       case 'complete':
         return this.#transition(previous, {
           action, to: 'done', by, at, note,

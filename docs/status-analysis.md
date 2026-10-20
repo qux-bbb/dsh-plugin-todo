@@ -124,3 +124,16 @@ AI propose → proposed ─用户 accept→ open ─AI claim→ working ─AI su
 1. **模型侧工具是否接受 `todo_complete` 下线？**（A 方案的直接后果；若不接受，就退化为方案 0 只改展示层）
 2. **`confirm` 后是否允许"已确认但还没完成"？**若需要（比如确认后仍要等一次交付检查），`confirmed` 就不能删。
 3. **`void` 是否保留**（留档 + 可 `reopen`）还是改成真删除？这决定 `reopen` 的终态语义。
+
+## 9. 决策与落地（2026-10-20）
+
+上面第 1–8 节记录的是**改动前**的分析，保留当作决策依据；实际落地以下面为准，**代码是唯一的真源**，与本文冲突时以代码为准。
+
+已采用**方案 A（去 `confirmed`）+ 展示层收敛**：
+
+- 状态机 8 → 7：`STATUSES = ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void']`；`confirmed` 已从 `store.js` 的转换表、`USER_ACTIONS`/`AI_ACTIONS`、`normalizeStatus`、`api.js` 的 `/state`、`client.js` 的 `STATUS_META`/筛选分组中全部删除。
+- `confirm` 由 `review` 直接到 `done`，并在同一动作里写入 `approval`（复用原字段，未新增数据结构）；模型侧删除 `complete`，即模型没有任何路径把待办标成 `done`。
+- 模型工具 8 → 7：`todo_complete` 下线；`todo_submit` 把待办交到 `review` 后由用户在面板确认。
+- 历史数据不迁移：`normalizeStatus` 把旧记录里的 `confirmed` 前向读成 `done`，未知状态仍降级为 `open`。
+- 展示层：筛选页签收敛为 3 个分组（待我处理 / 进行中 / 全部），"进行中" = `open` + `working`；`review` 的行内提示改为"确认即完成"。
+- 第 7 节验收标准按新语义执行；两份 README 的状态机图与规则说明已同步。

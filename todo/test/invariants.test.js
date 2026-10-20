@@ -3,11 +3,11 @@
  *
  * `store.test.js` pins the behaviour of each action one example at a time. This
  * file takes the opposite approach: it walks the **whole** `status × action ×
- * actor` matrix (8 × 11 × 2 = 176 combinations) and asserts the two promises the
+ * actor` matrix (7 × 11 × 2 = 154 combinations) and asserts the two promises the
  * plugin exists for hold everywhere, not just on the happy path:
  *
  * 1. the model can never accept its own proposal, confirm its own result, or
- *    mark anything done that a user did not confirm first;
+ *    mark anything done at all;
  * 2. every todo that reaches `done` carries a recorded user confirmation;
  *
  * plus two mechanical properties: an illegal action always fails with a
@@ -74,12 +74,6 @@ async function at(status) {
       await store.act({ id, action: 'claim', actor: 'ai' })
       await store.act({ id, action: 'submit', actor: 'ai', summary: 's' })
       break
-    case 'confirmed':
-      id = await create('user')
-      await store.act({ id, action: 'claim', actor: 'ai' })
-      await store.act({ id, action: 'submit', actor: 'ai', summary: 's' })
-      await store.act({ id, action: 'confirm', actor: 'user' })
-      break
     case 'done': id = await create('user'); await store.act({ id, action: 'complete', actor: 'user' }); break
     case 'void': id = await create('user'); await store.act({ id, action: 'void', actor: 'user', reason: 'r' }); break
     default: throw new Error(`no fixture for ${status}`)
@@ -119,9 +113,9 @@ describe('todo workflow invariants', () => {
           if (actor === 'ai' && (action === 'accept' || action === 'confirm') && outcome !== undefined) {
             violations.push(`${status}/${action}/${actor} let the model confirm`)
           }
-          // (4) the model completes only what the user already confirmed.
-          if (actor === 'ai' && action === 'complete' && outcome !== undefined && status !== 'confirmed') {
-            violations.push(`${status}/${action}/${actor} completed from ${status}`)
+          // (4) only the user completes a todo: the model has no `done` path.
+          if (actor === 'ai' && action === 'complete' && outcome !== undefined) {
+            violations.push(`${status}/${action}/${actor} let the model complete a todo`)
           }
           // (5) a refused action is a no-op, not a partial write.
           if (outcome === undefined) {
@@ -146,24 +140,30 @@ describe('todo workflow invariants', () => {
       const user = availableActions(status, 'user')
       assert.ok(!ai.includes('accept'), `the model must not be offered accept (${status})`)
       assert.ok(!ai.includes('confirm'), `the model must not be offered confirm (${status})`)
-      if (status !== 'confirmed') assert.ok(!ai.includes('complete'), `the model must not be offered complete before confirmation (${status})`)
+      assert.ok(!ai.includes('complete'), `the model must never be offered complete (${status})`)
       if (status === 'proposed') assert.ok(user.includes('accept'), 'the user must be offered accept on a proposal')
-      if (status === 'review') assert.ok(user.includes('confirm'), 'the user must be offered confirm on a submission')
+      if (status === 'review') {
+        assert.ok(user.includes('confirm'), 'the user must be offered confirm on a submission')
+        assert.ok(!user.includes('complete'), 'a submission is completed with confirm, not complete')
+      }
       if (status === 'done' || status === 'void') assert.equal(ai.length, 0, `a ${status} todo offers the model nothing`)
     }
   })
 
-  it('reaches `done` from `review` only through the user', async () => {
-    // The model's route: submit, then it is refused, then the user confirms, then it may finish.
+  it('reaches `done` from `review` only through the user confirming', async () => {
+    // Neither actor can complete a submitted todo: the user's confirmation is
+    // the only way out of `review`.
     const { store, id } = await at('review')
     await assert.rejects(() => store.act({ id, action: 'complete', actor: 'ai' }), TodoError)
-    await store.act({ id, action: 'confirm', actor: 'user' })
-    const done = await store.act({ id, action: 'complete', actor: 'ai' })
+    await assert.rejects(() => store.act({ id, action: 'complete', actor: 'user' }), TodoError)
+    const done = await store.act({ id, action: 'confirm', actor: 'user' })
     assert.equal(done.todo.status, 'done')
-    assert.equal(done.todo.approval.by, 'user', 'the model consumed the user confirmation')
+    assert.equal(done.todo.approval.by, 'user', 'the confirmation is recorded as the approval')
+    assert.equal(done.todo.completion.by, 'user')
 
-    // The user's route: one action, and that action writes the confirmation.
-    const direct = await at('review')
+    // A todo that was never submitted is completed directly, and that action is
+    // itself the confirmation.
+    const direct = await at('open')
     const completed = await direct.store.act({ id: direct.id, action: 'complete', actor: 'user' })
     assert.equal(completed.todo.status, 'done')
     assert.equal(completed.todo.approval.by, 'user')
