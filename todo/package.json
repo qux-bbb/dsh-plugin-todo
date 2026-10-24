@@ -1,6 +1,6 @@
 {
   "name": "@qux-bbb/dsh-plugin-todo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "User-confirmed todo list plugin for DeepSeek Harness: track tasks in a global ($DSH_HOME) or project (<projectRoot>/.dsh) level, with destructive actions requiring explicit confirmation",
   "type": "module",
   "main": "lib/index.js",

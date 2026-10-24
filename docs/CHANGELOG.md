@@ -2,6 +2,36 @@
 
 本项目的版本记录；每个已发布版本一节，新的在上。日期为发布日。
 
+## v0.1.1 — 2026-10-24
+
+修复 DSH `0.2.1-rc.3` 及以后版本上的启动崩溃。
+
+### 问题
+
+`0.2.1-rc.3` 起，浏览器端模块系统按 `package.json` 的包名给每个插件分配 entry id；而 0.1.0 的 `lib/client.js` 仍用改名前的 `dsh-plugin-todo` 注册 factory。宿主按 `@qux-bbb/dsh-plugin-todo` 查不到 factory，于是再执行一次 bundle，第二次注册撞上已存在的 id，抛出 `duplicate factory registration`，整个 web boot 失败（`1 entry did not activate`），桌面端随即触发 profile 恢复。
+
+### 修复
+
+- `lib/client.js`：`window.__ModuleLoader__.load({ id })` 改为包名 `@qux-bbb/dsh-plugin-todo`。
+- `lib/client.js`：样式节点的 `data-plugin` 同步为包名，保证热重载/禁用时样式能被正确认领和清理。
+- `test/client.test.js`：注册 id 与 `data-plugin` 的断言改为对照 `package.json` 的 `name`，防止后续改名再次漂移。
+
+### 验证
+
+- `node --test`（165 个测试、42 suites）全绿。
+- `node scripts/smoke-runtime.mjs` → PASS。
+- 用真实 loader 在隔离 profile 上 `--dump-config`，todo 条目正常组合、路径解析为 `file:///.../plugins/todo/lib/index.js`。
+
+### 升级
+
+已装 0.1.0 的用户请升级：
+
+```powershell
+npm install @qux-bbb/dsh-plugin-todo@0.1.1
+```
+
+或重新运行 `scripts/install-todo.mjs --profile desktop`。0.1.0 已在 npm 上标记为 deprecated。
+
 ## v0.1.0 — 2026-10-24
 
 首个公开版本：DeepSeek Harness（DSH）的**由人确认的待办清单**插件。
