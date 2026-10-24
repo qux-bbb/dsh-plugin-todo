@@ -1049,6 +1049,9 @@ export function summarize(todo, previewLength = 200) {
     scope: todo.scope,
     title: todo.title,
     status: todo.status,
+    // The "needs a human decision" judgement lives in `needsAttention` alone;
+    // the panel reads this flag instead of re-deriving the status list.
+    attention: needsAttention(todo.status),
     priority: todo.priority,
     tags: todo.tags,
     origin: todo.origin,

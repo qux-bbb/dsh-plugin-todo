@@ -364,8 +364,11 @@ describe('todo client bundle', () => {
     for (const status of ['proposed', 'review', 'blocked', 'done', 'void']) assert.equal(clientModule.matchesFilter({ status }, 'progress'), false)
     // A single status stays filterable even without its own tab.
     assert.equal(clientModule.matchesFilter({ status: 'void' }, 'void'), true)
-    assert.equal(clientModule.isAttention({ status: 'review' }), true)
-    assert.equal(clientModule.isAttention({ status: 'done' }), false)
+    // The row highlight trusts the server's flag; it does not re-derive it
+    // from the status, so the status list is not duplicated on the client.
+    assert.equal(clientModule.isAttention({ attention: true }), true)
+    assert.equal(clientModule.isAttention({ attention: false }), false)
+    assert.equal(clientModule.isAttention({ status: 'review' }), false)
 
     assert.equal(clientModule.actionLabel({ status: 'review' }, 'reject'), '打回重做')
     assert.equal(clientModule.actionLabel({ status: 'proposed' }, 'reject'), '驳回')

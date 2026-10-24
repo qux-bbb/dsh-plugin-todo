@@ -137,3 +137,4 @@ AI propose → proposed ─用户 accept→ open ─AI claim→ working ─AI su
 - 历史数据不迁移：`normalizeStatus` 把旧记录里的 `confirmed` 前向读成 `done`，未知状态仍降级为 `open`。
 - 展示层：筛选页签收敛为 3 个分组（待我处理 / 进行中 / 全部），"进行中" = `open` + `working`；`review` 的行内提示改为"确认即完成"。
 - 第 7 节验收标准按新语义执行；两份 README 的状态机图与规则说明已同步。
+- 展示层配套（原 D5，补齐）：`summarize` 直接输出 `attention: needsAttention(status)`，面板行只读这个字段、不再按状态重算；"需要人处理"的判定只剩服务端 `needsAttention` 一处。

@@ -79,8 +79,6 @@ window.__ModuleLoader__.load({
     const FILTERS = FILTER_GROUPS.map((group) => group.id)
     /** Tabs by id, for label / hint / status lookup. */
     const GROUP_BY_ID = new Map(FILTER_GROUPS.map((group) => [group.id, group]))
-    /** The statuses that mean "needs a human decision right now". */
-    const ATTENTION_STATUSES = GROUP_BY_ID.get('attention').statuses
     /** Priority presentation. */
     const PRIORITY_META = {
       high: { label: '高', marker: '!!' },
@@ -226,9 +224,15 @@ window.__ModuleLoader__.load({
       return countOf(state, scope, 'attention')
     }
 
-    /** Whether a todo is waiting for the user right now. */
+    /**
+     * Whether a todo is waiting for the user right now. The server decides it
+     * once in `summarize`; the panel only reads the flag, so a new status can
+     * never leave the row highlight behind.
+     * @param {{ attention?: boolean }} todo - a todo row from the panel API.
+     * @returns {boolean} true when the server marked it as needing the user.
+     */
     function isAttention(todo) {
-      return ATTENTION_STATUSES.includes(todo.status)
+      return todo?.attention === true
     }
 
     /** Whether one todo passes the current filter. */

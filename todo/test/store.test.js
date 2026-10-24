@@ -1118,6 +1118,8 @@ describe('summaries and action tables', () => {
     assert.equal(summary.id, id)
     assert.equal(summary.title, 'summary')
     assert.equal(summary.status, 'working')
+    // The server decides whether a row waits for the user; `working` does not.
+    assert.equal(summary.attention, false)
     assert.equal(summary.answerCount, 1)
     assert.equal(summary.question, null)
     assert.equal(summary.preview.length, 20)
@@ -1151,6 +1153,8 @@ describe('summaries and action tables', () => {
     }
     const summary = summarize(todo)
     assert.equal(summary.preview, 'd')
+    // A submission waits for the user's confirmation.
+    assert.equal(summary.attention, true)
     assert.equal(summary.submission.summary.length, 200)
     assert.match(summary.submission.summary, /…$/)
   })
