@@ -6,6 +6,11 @@
 
 首个公开版本：DeepSeek Harness（DSH）的**由人确认的待办清单**插件。
 
+### 发布渠道
+
+- GitHub Release：<https://github.com/qux-bbb/dsh-plugin-todo/releases/tag/v0.1.0>
+- npm：`@qux-bbb/dsh-plugin-todo@0.1.0`
+
 ### 功能
 
 - **7 状态工作流**：`proposed → open → working → review → done`，另有 `blocked`（等回答）与 `void`（作废，可重开）。

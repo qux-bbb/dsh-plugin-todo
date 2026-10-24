@@ -1,5 +1,8 @@
 # dsh-plugin-todo
 
+[![npm](https://img.shields.io/npm/v/@qux-bbb/dsh-plugin-todo)](https://www.npmjs.com/package/@qux-bbb/dsh-plugin-todo)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 一个 DeepSeek Harness（DSH）插件：**人和 AI 协作的待办清单，所有"确认"都留在人手里**。
 
 AI 提的待办要等你确认才算数；AI 做完只能提交"待确认"，**你确认即完成**——模型没有任何路径自己把待办标成完成。规则写在 `lib/store.js` 里。
@@ -12,6 +15,16 @@ AI propose → proposed ─用户 accept→ open ─AI claim→ working ─AI su
 版本记录与各版本变更见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
 
 ## 安装
+
+### 从 npm 安装
+
+需要 DSH 自带 `dsh plugin` 命令。包声明了 `dsh.bundle`，装进 profile 后这一层会按**包名**自动接入：
+
+```sh
+dsh plugin --profile desktop add @qux-bbb/dsh-plugin-todo
+```
+
+装完重启一次应用。没有该命令、或者要装进 `desktop` 这类 `dsh plugin` 不便处理的 profile，用下面的手动安装器。
 
 ### 第一次装（含另一台机器）
 

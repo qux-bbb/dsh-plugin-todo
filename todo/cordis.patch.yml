@@ -1,0 +1,10 @@
+# The layer this bundle contributes to a profile that lists
+# `@qux-bbb/dsh-plugin-todo` in its `dsh.profile.bundles`. Rows reference the
+# plugin by package name rather than by a source path, so Node's module
+# resolution finds the installed copy.
+- insert:
+    - id: todo
+      name: "@qux-bbb/dsh-plugin-todo"
+      config:
+        level: both
+        defaultScope: project
