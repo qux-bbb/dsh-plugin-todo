@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url'
 import { API_PREFIX, CLIENT_HEADER } from '../lib/api.js'
 
 const CLIENT_PATH = fileURLToPath(new URL('../lib/client.js', import.meta.url))
+/** The loader keys browser modules by package name; registration must match it exactly. */
+const PACKAGE_NAME = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).name
 
 /**
  * The hook object the stub React dispatches to. A real mount swaps itself in
@@ -225,13 +227,13 @@ function loadClientModule() {
 describe('todo client bundle', () => {
   it('registers a factory under the package name and claims its stylesheet', () => {
     assert.equal(typeof page.registration, 'object')
-    assert.equal(page.registration.id, 'dsh-plugin-todo')
+    assert.equal(page.registration.id, PACKAGE_NAME)
     assert.equal(typeof page.registration.factory, 'function')
     // The module system claims untagged <style> tags present when the factory
     // returns, so the stylesheet must be inserted while it runs.
     assert.equal(page.appended.length, 1)
     const style = page.appended[0]
-    assert.equal(style.dataset.plugin, 'dsh-plugin-todo')
+    assert.equal(style.dataset.plugin, PACKAGE_NAME)
     assert.equal(style.dataset.pluginCss, 'dsh-plugin-todo/client.css')
     assert.match(style.textContent, /\.todoPage/)
   })

@@ -20,7 +20,7 @@
  * @see module:dsh-plugin-todo
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-plugin-todo',
+  id: '@qux-bbb/dsh-plugin-todo',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
@@ -154,7 +154,7 @@ window.__ModuleLoader__.load({
     const CSS_TAG = 'dsh-plugin-todo/client.css'
     if (typeof document !== 'undefined' && document.querySelector(`style[data-plugin-css=${JSON.stringify(CSS_TAG)}]`) === null) {
       const style = document.createElement('style')
-      style.dataset.plugin = 'dsh-plugin-todo'
+      style.dataset.plugin = '@qux-bbb/dsh-plugin-todo'
       style.dataset.pluginCss = CSS_TAG
       style.textContent = CSS
       document.head.appendChild(style)
