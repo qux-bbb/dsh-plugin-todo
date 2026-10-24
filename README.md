@@ -9,6 +9,8 @@ AI propose → proposed ─用户 accept→ open ─AI claim→ working ─AI su
             └用户 reject→ void                        └用户 confirm→ done
 ```
 
+版本记录与各版本变更见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
+
 ## 安装
 
 ### 第一次装（含另一台机器）
