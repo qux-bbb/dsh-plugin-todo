@@ -26,7 +26,7 @@ dsh plugin --profile desktop add @qux-bbb/dsh-plugin-todo
 
 装完重启一次应用。没有该命令、或者要装进 `desktop` 这类 `dsh plugin` 不便处理的 profile，用下面的手动安装器。
 
-### 第一次装（含另一台机器）
+### 从源码安装
 
 ```powershell
 git clone https://github.com/qux-bbb/dsh-plugin-todo.git
