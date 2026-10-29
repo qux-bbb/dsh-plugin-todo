@@ -444,6 +444,11 @@ describe('todo client bundle', () => {
     assert.equal(clientModule.actionLabel({ status: 'proposed' }, 'accept'), '确认接受')
     assert.equal(clientModule.actionLabel({ status: 'review' }, 'confirm'), '确认完成')
     assert.equal(clientModule.actionLabel({ status: 'done' }, 'reopen'), '重新打开')
+    // Reopening a started todo is not the same promise as reopening an archived
+    // one: it sends the todo back to the queue, so it says so.
+    assert.equal(clientModule.actionLabel({ status: 'working' }, 'reopen'), '重开待办')
+    assert.equal(clientModule.actionLabel({ status: 'blocked' }, 'reopen'), '重开待办')
+    assert.equal(clientModule.actionLabel({ status: 'void' }, 'reopen'), '重新打开')
     // The edit action names the todo: its form changes title, detail,
     // acceptance, priority, and tags, not one "detail" field.
     assert.equal(clientModule.actionLabel({ status: 'open' }, 'update'), '编辑待办')
@@ -978,6 +983,188 @@ describe('todo panel rendering', () => {
     } finally {
       mount.unmount()
       globalThis.fetch = previousFetch
+      clientModule.activeSession.id = null
+      clientModule.activeSession.cwd = null
+    }
+  })
+
+  it('stops offering the hand-off once the model has the todo', async () => {
+    const clientModule = loadClientModule()
+    const previousFetch = globalThis.fetch
+    const cwd = 'D:\\work\\proj'
+    const at = '2026-05-01T00:00:00.000Z'
+    const file = `${cwd}\\.dsh\\todo\\todos.jsonl`
+    const summary = (id, row) => ({
+      id,
+      scope: 'project',
+      preview: '',
+      acceptance: '',
+      tags: [],
+      question: null,
+      answerCount: 0,
+      submission: null,
+      accepted: null,
+      approval: null,
+      completion: null,
+      voided: null,
+      at,
+      updatedAt: at,
+      ...row,
+    })
+    // `working` and `blocked` mirror what the host now sends: no `request`, so no
+    // hand-off, but a `reopen` back to the queue.
+    const rows = [
+      summary('p-working', { title: 'AI 正在做', status: 'working', priority: 'normal', origin: 'user', actions: ['complete', 'update', 'reopen', 'void'] }),
+      summary('p-blocked', { title: '等你说清楚', status: 'blocked', priority: 'normal', origin: 'user', question: '要哪个环境？', actions: ['answer', 'complete', 'update', 'reopen', 'void'] }),
+      summary('p-open', { title: '还没开工', status: 'open', priority: 'normal', origin: 'user', actions: ['request', 'complete', 'update', 'void'] }),
+    ]
+    const payload = {
+      level: 'both',
+      defaultScope: 'project',
+      cwd,
+      projectRoot: cwd,
+      current: { source: 'manual', path: cwd, projectRoot: cwd },
+      projects: [],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
+      canDeliver: true,
+      levels: {
+        global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
+        project: { scope: 'project', enabled: true, dir: `${cwd}\\.dsh\\todo`, file, total: rows.length, counts: { working: 1, blocked: 1, open: 1 }, todos: rows },
+      },
+    }
+    globalThis.fetch = async (url) => {
+      const address = decodeURIComponent(String(url))
+      if (/\/todo\?/.test(address)) {
+        const id = address.match(/[?&]id=([^&]+)/)?.[1]
+        const row = rows.find((candidate) => candidate.id === id) ?? rows[0]
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, todo: { ...row, detail: '详情', acceptance: '验收', projectRoot: cwd, answers: [], history: [], file } }),
+        }
+      }
+      return { ok: true, status: 200, json: async () => payload }
+    }
+    clientModule.activeSession.id = null
+    clientModule.activeSession.cwd = null
+    const mount = createMount(clientModule.TodoPage)
+    try {
+      let tree = await mount.settle()
+      const labels = () => elements(tree, 'button').map((button) => texts(button).join(''))
+      const handoffs = () => labels().filter((label) => label === '交给 AI 完成')
+      const headOf = (title) => elements(tree, 'div')
+        .find((node) => node.props.className === 'todoItemHead' && texts(node).join(' ').includes(title))
+
+      // Only the todo nobody has started yet offers the hand-off.
+      assert.equal(handoffs().length, 1, 'only an open row offers the hand-off')
+      // A started todo offers the way back to the queue instead.
+      assert.equal(labels().filter((label) => label === '重开待办').length, 2, 'working and blocked both offer 重开待办')
+
+      for (const title of ['AI 正在做', '等你说清楚']) {
+        const head = headOf(title)
+        assert.ok(head !== undefined, `the ${title} row is rendered`)
+        head.props.onClick()
+        tree = await mount.settle()
+        // The detail toolbar used to keep its own status list and re-offer the
+        // hand-off here; it now reads the same action list as the row.
+        assert.equal(handoffs().length, 1, `the expanded ${title} row must not offer the hand-off`)
+      }
+
+      const openHead = headOf('还没开工')
+      assert.ok(openHead !== undefined, 'the open row is rendered')
+      openHead.props.onClick()
+      tree = await mount.settle()
+      // The row plus the expanded detail: the hand-off is still reachable where
+      // it is legal, so the fix did not remove the button outright.
+      assert.equal(handoffs().length, 2, 'an open todo keeps both hand-off entries')
+    } finally {
+      mount.unmount()
+      globalThis.fetch = previousFetch
+      clientModule.activeSession.id = null
+      clientModule.activeSession.cwd = null
+    }
+  })
+
+  it('confirms before sending a started todo back to the queue', async () => {
+    const clientModule = loadClientModule()
+    const previousFetch = globalThis.fetch
+    // The module's `before` hook removes the page stubs again; the confirm dialog
+    // is only reachable when a `window` exists, so this test installs one.
+    const previousWindow = globalThis.window
+    const cwd = 'D:\\work\\proj'
+    const at = '2026-05-01T00:00:00.000Z'
+    const file = `${cwd}\\.dsh\\todo\\todos.jsonl`
+    const row = {
+      id: 'p-working',
+      scope: 'project',
+      title: 'AI 正在做',
+      status: 'working',
+      priority: 'normal',
+      origin: 'user',
+      tags: [],
+      preview: '',
+      acceptance: '',
+      question: null,
+      answerCount: 0,
+      submission: null,
+      accepted: null,
+      approval: null,
+      completion: null,
+      voided: null,
+      at,
+      updatedAt: at,
+      actions: ['complete', 'update', 'reopen', 'void'],
+    }
+    const payload = {
+      level: 'both',
+      defaultScope: 'project',
+      cwd,
+      projectRoot: cwd,
+      current: { source: 'manual', path: cwd, projectRoot: cwd },
+      projects: [],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
+      canDeliver: true,
+      levels: {
+        global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
+        project: { scope: 'project', enabled: true, dir: `${cwd}\\.dsh\\todo`, file, total: 1, counts: { working: 1 }, todos: [row] },
+      },
+    }
+    const posted = []
+    globalThis.fetch = async (url, options) => {
+      const address = decodeURIComponent(String(url))
+      if (options?.method === 'POST' && address.includes('/action')) posted.push(JSON.parse(options.body))
+      if (/\/todo\?/.test(address)) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, todo: { ...row, detail: '', acceptance: '', projectRoot: cwd, answers: [], history: [], file } }) }
+      }
+      return { ok: true, status: 200, json: async () => payload }
+    }
+    clientModule.activeSession.id = null
+    clientModule.activeSession.cwd = null
+    const mount = createMount(clientModule.TodoPage)
+    const asked = []
+    try {
+      globalThis.window = { confirm: (message) => { asked.push(message); return false } }
+      let tree = await mount.settle()
+      const reopen = elements(tree, 'button').find((button) => texts(button).join('') === '重开待办')
+      assert.ok(reopen !== undefined, 'the working row offers 重开待办')
+      reopen.props.onClick({ stopPropagation() {} })
+      tree = await mount.settle()
+      // Declining keeps the todo where it is, and says why it asked.
+      assert.equal(posted.length, 0, 'a refused confirmation sends nothing')
+      assert.match(asked[0], /重开待办：AI 正在做/)
+      assert.match(asked[0], /清掉 AI 的进展与提问/)
+
+      globalThis.window = { confirm: () => true }
+      elements(tree, 'button').find((button) => texts(button).join('') === '重开待办').props.onClick({ stopPropagation() {} })
+      tree = await mount.settle()
+      assert.equal(posted.length, 1)
+      assert.equal(posted[0].action, 'reopen')
+      assert.equal(posted[0].id, 'p-working')
+    } finally {
+      mount.unmount()
+      globalThis.fetch = previousFetch
+      if (previousWindow === undefined) delete globalThis.window
+      else globalThis.window = previousWindow
       clientModule.activeSession.id = null
       clientModule.activeSession.cwd = null
     }

@@ -91,13 +91,18 @@ export class TodoError extends Error {
 
 /**
  * The actions a user may run from the panel, per status. `request` is not a
- * store action: it hands the todo to the model (see the host half).
+ * store action: it hands the todo to the model (see the host half). It means
+ * "start this todo in a session", so it belongs to `open` alone: once the model
+ * has it (`working`) a second hand-off would run the work twice, and when it is
+ * `blocked` the wait is on the user's answer, which another session cannot
+ * supply. A started todo gets `reopen` instead, which is the explicit way back
+ * to the queue.
  */
 const USER_ACTIONS = {
   proposed: ['accept', 'complete', 'update', 'void'],
   open: ['request', 'complete', 'update', 'void'],
-  working: ['request', 'complete', 'update', 'void'],
-  blocked: ['answer', 'request', 'complete', 'update', 'void'],
+  working: ['complete', 'update', 'reopen', 'void'],
+  blocked: ['answer', 'complete', 'update', 'reopen', 'void'],
   review: ['confirm', 'reject', 'update', 'void'],
   done: ['reopen'],
   void: ['reopen'],
@@ -133,7 +138,10 @@ const TRANSITIONS = {
   confirm: { from: ['review'], to: 'done', actors: ['user'] },
   reject: { from: ['proposed', 'review'], to: null, actors: ['user'] },
   complete: { from: ['proposed', 'open', 'working', 'blocked'], to: 'done', actors: ['user'] },
-  reopen: { from: ['done', 'void', 'review', 'proposed'], to: 'open', actors: ['user'] },
+  // `reopen` is the user's explicit "start over": it also takes a started todo
+  // (`working` / `blocked`) back to the queue, which is the only way to hand a
+  // stuck todo off again without losing the fact that it was restarted.
+  reopen: { from: ['done', 'void', 'review', 'proposed', 'working', 'blocked'], to: 'open', actors: ['user'] },
   void: { from: STATUSES.filter((status) => status !== 'void'), to: 'void', actors: ['ai', 'user'] },
   update: { from: STATUSES.filter((status) => status !== 'void'), to: null, actors: ['ai', 'user', 'system'] },
 }
@@ -837,9 +845,12 @@ export class TodoStore {
           },
         })
       case 'reopen':
+        // Back to the queue means back to unclaimed: the claim, the pending
+        // question, and any submitted result are dropped from the record (the
+        // history keeps them), while the acceptance itself stays on file.
         return this.#transition(previous, {
           action, to: 'open', by, at, note,
-          patch: { completion: null, approval: null, voided: null, question: null },
+          patch: { completion: null, approval: null, voided: null, question: null, submission: null, agent: null },
         })
       case 'void':
         return this.#void(previous, by, at, optionalText(input.reason, 'reason', this.maxDetailLength) || note || (by === 'ai' ? null : '用户作废'), 'void')

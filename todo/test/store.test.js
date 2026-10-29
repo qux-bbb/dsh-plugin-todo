@@ -910,6 +910,32 @@ describe('TodoStore.act — refusals and special transitions', () => {
     await assert.rejects(() => store.act({ id: voided.id, action: 'reopen', actor: 'ai' }), /reopen is not allowed for actor ai/)
   })
 
+  it('`reopen` sends a started todo back to the queue, dropping the claim and the question', async () => {
+    const cwd = await dir('act-reopen-started')
+    const store = makeStore(cwd)
+    const make = async (title) => (await store.create({ items: [{ title }] })).todos[0].id
+
+    const working = await make('working one')
+    await store.act({ id: working, action: 'claim', actor: 'ai' })
+    const requeued = await store.act({ id: working, action: 'reopen', actor: 'user' })
+    assert.equal(requeued.todo.status, 'open')
+    assert.equal(requeued.todo.agent, null, 'the claim goes with the reopen')
+
+    const blocked = await make('blocked one')
+    await store.act({ id: blocked, action: 'claim', actor: 'ai' })
+    await store.act({ id: blocked, action: 'ask', actor: 'ai', question: 'which environment?' })
+    await store.act({ id: blocked, action: 'answer', actor: 'user', text: 'production' })
+    await store.act({ id: blocked, action: 'ask', actor: 'ai', question: 'and the region?' })
+    const cleared = await store.act({ id: blocked, action: 'reopen', actor: 'user' })
+    assert.equal(cleared.todo.status, 'open')
+    assert.equal(cleared.todo.question, null, 'the pending question goes with the claim')
+    assert.equal(cleared.todo.answers.length, 1, 'the answers the user already gave stay on record')
+    assert.equal(cleared.todo.accepted.by, 'user', 'it stays an accepted todo, not a fresh one')
+
+    // A started todo is still in a session's hands until the user takes it back.
+    await assert.rejects(() => store.act({ id: blocked, action: 'reopen', actor: 'ai' }), /reopen is not allowed for actor ai/)
+  })
+
   it('`claim` moves a todo to working and records the agent', async () => {
     const cwd = await dir('act-claim')
     const store = makeStore(cwd)
@@ -1073,9 +1099,13 @@ describe('TodoStore.clear', () => {
 describe('summaries and action tables', () => {
   it('offers the documented actions to the user and the model', () => {
     assert.deepEqual(availableActions('proposed', 'user'), ['accept', 'complete', 'update', 'void'])
+    // `request` means "start this todo in a session", so it belongs to `open`
+    // alone: a working todo already has a session, and a blocked one is waiting
+    // on the user's answer, which another session cannot supply. A started todo
+    // gets `reopen` instead, the explicit way back to the queue.
     assert.deepEqual(availableActions('open', 'user'), ['request', 'complete', 'update', 'void'])
-    assert.deepEqual(availableActions('working', 'user'), ['request', 'complete', 'update', 'void'])
-    assert.deepEqual(availableActions('blocked', 'user'), ['answer', 'request', 'complete', 'update', 'void'])
+    assert.deepEqual(availableActions('working', 'user'), ['complete', 'update', 'reopen', 'void'])
+    assert.deepEqual(availableActions('blocked', 'user'), ['answer', 'complete', 'update', 'reopen', 'void'])
     assert.deepEqual(availableActions('review', 'user'), ['confirm', 'reject', 'update', 'void'])
     assert.deepEqual(availableActions('done', 'user'), ['reopen'])
     assert.deepEqual(availableActions('void', 'user'), ['reopen'])

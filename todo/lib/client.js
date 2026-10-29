@@ -256,6 +256,9 @@ window.__ModuleLoader__.load({
     /** The button label of one action on one todo. */
     function actionLabel(todo, action) {
       if (action === 'reject') return todo.status === 'review' ? '打回重做' : '驳回'
+      // `reopen` on an archived todo reopens it; on a started one it sends the
+      // todo back to the queue, which is a different promise and gets its own name.
+      if (action === 'reopen' && todo.status !== 'done' && todo.status !== 'void') return '重开待办'
       return ACTION_LABELS[action] ?? action
     }
 
@@ -709,8 +712,11 @@ window.__ModuleLoader__.load({
           return
         }
         const label = actionLabel(todo, action)
-        if (typeof window !== 'undefined' && (action === 'accept' || action === 'confirm')
-          && !window.confirm(`${label}：${todo.title}？`)) return
+        // Reopening an archived todo is free; reopening a started one throws the
+        // model's claim and its pending question away, so it asks first.
+        const dropsWork = action === 'reopen' && (todo.status === 'working' || todo.status === 'blocked')
+        if (typeof window !== 'undefined' && (action === 'accept' || action === 'confirm' || dropsWork)
+          && !window.confirm(dropsWork ? `${label}：${todo.title}？这会清掉 AI 的进展与提问。` : `${label}：${todo.title}？`)) return
         void mutate('POST', '/action', { id: todo.id, action, scope: todo.scope, ...(extra ?? {}) }, {
           message: `${label}：${todo.title}`,
         })
@@ -1128,7 +1134,11 @@ window.__ModuleLoader__.load({
           const meta = STATUS_META[todo.status] ?? { label: todo.status, hint: '' }
           const isEditing = editing !== null && editing.id === todo.id
           const draftOpen = promptDraft !== null && promptDraft.id === todo.id
+          // The server's action list decides every button this row offers. The
+          // detail toolbar reads it too: a second, hard-coded status list is how
+          // the hand-off stayed on rows that are already being worked on.
           const actions = (todo.actions ?? []).slice()
+          const canRequest = actions.includes('request')
           const rowsHtml = []
 
           rowsHtml.push(h('div', {
@@ -1396,7 +1406,7 @@ window.__ModuleLoader__.load({
                         onClick: () => runAction(record, 'answer'),
                       }, '回答 AI')
                       : null,
-                    state?.canDeliver === true && (todo.status === 'open' || todo.status === 'working' || todo.status === 'blocked')
+                    state?.canDeliver === true && canRequest
                       ? h('button', {
                         className: 'todoButton',
                         type: 'button',
