@@ -96,7 +96,7 @@ git pull
 ## 使用
 
 - 工具：`todo_propose` `todo_list` `todo_get` `todo_claim` `todo_update` `todo_submit` `todo_void`，另有 `/todo` 命令
-- 面板：侧边栏「待办」，跟随当前会话所在项目；标题下方按项目与全局列出待办数与待你处理数，点一下即可切换；筛选、搜索、手动添加、看/改详情、行内操作
+- 面板：侧边栏「待办」，跟随当前会话所在项目；标题下方按项目与全局列出待办数与待你处理数，点一下即可切换；筛选、搜索、手动添加、看/改详情、行内操作（「作废」「打回重做」在该行直接展开原因框，不用先展开详情）
 - 「交给 AI 完成」只在「待办」状态出现；已经交给 AI 的待办（「AI 进行中」/「待你补充」）改用「重开待办」退回待办，再重新交付。可选投递到哪条会话（含新建会话），冷会话也能投
 - 归档后仍可维护：展开「已完成」或「已作废」的待办可以直接「编辑待办」补充/修正，状态不变，确认与作废记录不丢；「改状态」下拉按服务端允许的动作列出能去的状态，选中即执行（例如退回「待办」继续做）
 - 存储：`<DSH_HOME>/todo/todos.jsonl`（全局）、`<项目根>/.dsh/todo/todos.jsonl`（项目）；配置项见 `lib/index.js` 的 `Config`
@@ -105,7 +105,7 @@ git pull
 
 ```powershell
 powershell -File scripts\dev-link.ps1   # 链接 @deepseek-ai/* 到本仓库，仅为本地跑测试
-cd todo; node --test                    # 175 个单元测试
+cd todo; node --test                    # 176 个单元测试
 node scripts\smoke-runtime.mjs          # 端到端冒烟
 ```
 

@@ -1279,6 +1279,159 @@ describe('todo panel rendering', () => {
     }
   })
 
+  it('opens the reason prompt when 作废 or 打回重做 is clicked on a collapsed row', async () => {
+    const clientModule = loadClientModule()
+    const previousFetch = globalThis.fetch
+    const previousWindow = globalThis.window
+    const requests = []
+    const cwd = 'D:\\work\\proj'
+    const at = '2026-05-01T00:00:00.000Z'
+    const file = `${cwd}\\.dsh\\todo\\todos.jsonl`
+    const summary = (id, row) => ({
+      id,
+      scope: 'project',
+      preview: '',
+      acceptance: '',
+      tags: [],
+      question: null,
+      answerCount: 0,
+      submission: null,
+      accepted: null,
+      approval: null,
+      completion: null,
+      voided: null,
+      at,
+      updatedAt: at,
+      ...row,
+    })
+    const rows = [
+      summary('p-review', {
+        title: 'AI 说做完了',
+        status: 'review',
+        priority: 'normal',
+        origin: 'user',
+        submission: { summary: '改好了', evidence: '测试通过' },
+        actions: ['confirm', 'complete', 'update', 'reject', 'void'],
+      }),
+      summary('p-open', {
+        title: '不想做了',
+        status: 'open',
+        priority: 'normal',
+        origin: 'user',
+        actions: ['request', 'complete', 'update', 'void'],
+      }),
+    ]
+    const level = {
+      scope: 'project',
+      enabled: true,
+      dir: `${cwd}\\.dsh\\todo`,
+      file,
+      total: rows.length,
+      counts: { review: 1, open: 1 },
+      todos: rows,
+    }
+    const payload = {
+      level: 'both',
+      defaultScope: 'project',
+      cwd,
+      projectRoot: cwd,
+      current: { source: 'manual', path: cwd, projectRoot: cwd },
+      projects: [],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
+      canDeliver: false,
+      levels: {
+        global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
+        project: level,
+      },
+    }
+    const posted = []
+    globalThis.fetch = async (url, options) => {
+      const address = decodeURIComponent(String(url))
+      requests.push({ url: address, method: options?.method ?? 'GET' })
+      if (options?.method === 'POST' && address.includes('/action')) {
+        posted.push(JSON.parse(options.body))
+        return { ok: true, status: 200, json: async () => level }
+      }
+      if (/\/todo\?/.test(address)) {
+        const id = address.match(/[?&]id=([^&]+)/)?.[1]
+        const row = rows.find((candidate) => candidate.id === id) ?? rows[0]
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, todo: { ...row, detail: '', acceptance: '', projectRoot: cwd, answers: [], history: [], file } }),
+        }
+      }
+      return { ok: true, status: 200, json: async () => payload }
+    }
+    clientModule.activeSession.id = null
+    clientModule.activeSession.cwd = null
+    const mount = createMount(clientModule.TodoPage)
+    const asked = []
+    let tree = null
+    const itemOf = (title) => elements(tree, 'div')
+      .find((node) => node.props.className === 'todoItem' && texts(node).join(' ').includes(title))
+    const headOf = (title) => elements(tree, 'div')
+      .find((node) => node.props.className === 'todoItemHead' && texts(node).join(' ').includes(title))
+    const buttonIn = (node, label) => elements(node, 'button').find((button) => texts(button).join('') === label)
+    try {
+      globalThis.window = { confirm: (message) => { asked.push(message); return true } }
+      tree = await mount.settle()
+      // Both rows start collapsed, with their reason boxes closed.
+      assert.equal(texts(tree).join(' | ').includes('作废原因'), false)
+      assert.equal(texts(tree).join(' | ').includes('打回原因'), false)
+
+      // 作废 used to set a draft the panel only renders inside the expanded
+      // detail, so the click on a collapsed row did nothing at all.
+      const voidButton = buttonIn(headOf('不想做了'), '作废')
+      assert.ok(voidButton !== undefined, 'the collapsed row offers 作废')
+      voidButton.props.onClick({ stopPropagation() {} })
+      tree = await mount.settle()
+      assert.match(texts(tree).join(' | '), /作废原因（可留空）：/)
+      assert.equal(itemOf('不想做了').props['data-expanded'], 'true', 'the row opens with its prompt')
+      assert.ok(requests.some((request) => /\/todo\?/.test(request.url) && request.url.includes('id=p-open')), 'the opened row fetches its record')
+
+      // The reason travels with the action, so the prompt is not just visual.
+      buttonIn(itemOf('不想做了'), '取消').props.onClick({})
+      tree = await mount.settle()
+      buttonIn(headOf('不想做了'), '作废').props.onClick({ stopPropagation() {} })
+      tree = await mount.settle()
+      elements(itemOf('不想做了'), 'textarea')[0]
+        .props.onChange({ target: { value: '需求变了，不做了' } })
+      tree = await mount.settle()
+      buttonIn(itemOf('不想做了'), '提交').props.onClick({})
+      tree = await mount.settle()
+      assert.equal(posted.length, 1)
+      assert.equal(posted[0].action, 'void')
+      assert.equal(posted[0].id, 'p-open')
+      assert.equal(posted[0].reason, '需求变了，不做了')
+      assert.match(asked[0], /确定要作废这条待办吗？/)
+
+      // 打回重做 on the review row takes the same route.
+      const rejectButton = buttonIn(headOf('AI 说做完了'), '打回重做')
+      assert.ok(rejectButton !== undefined, 'the collapsed review row offers 打回重做')
+      rejectButton.props.onClick({ stopPropagation() {} })
+      tree = await mount.settle()
+      assert.match(texts(tree).join(' | '), /打回原因：/)
+      assert.equal(itemOf('AI 说做完了').props['data-expanded'], 'true')
+      elements(itemOf('AI 说做完了'), 'textarea')[0]
+        .props.onChange({ target: { value: '验收没通过' } })
+      tree = await mount.settle()
+      buttonIn(itemOf('AI 说做完了'), '提交').props.onClick({})
+      tree = await mount.settle()
+      assert.equal(posted.length, 2)
+      assert.equal(posted[1].action, 'reject')
+      assert.equal(posted[1].id, 'p-review')
+      assert.equal(posted[1].reason, '验收没通过')
+    } finally {
+      mount.unmount()
+      globalThis.fetch = previousFetch
+      if (previousWindow === undefined) delete globalThis.window
+      else globalThis.window = previousWindow
+      clientModule.activeSession.id = null
+      clientModule.activeSession.cwd = null
+    }
+  })
+
   it('offers a session picker for the hand-off and sends to the picked conversation', async () => {
     const clientModule = loadClientModule()
     const requests = []

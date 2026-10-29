@@ -724,6 +724,29 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /**
+       * Open one inline prompt — the answer box, the void reason, or the reject
+       * reason — on a todo.
+       *
+       * The prompt is rendered inside the expanded detail, so a row that is still
+       * collapsed has to be opened first: setting only the draft left a head
+       * button ("作废", "打回重做", "回答") looking like a dead click. Opening also
+       * fetches the record the detail renders.
+       * @param {object} todo - the todo the prompt belongs to.
+       * @param {'answer' | 'void' | 'reject'} kind - which prompt to open.
+       */
+      const openPrompt = (todo, kind) => {
+        setEditing(null)
+        setPicker(null)
+        setFallback(null)
+        setNotice(null)
+        setPromptDraft({ id: todo.id, kind, text: '' })
+        if (expanded !== todo.id) {
+          setExpanded(todo.id)
+          void loadRecord(todo.id)
+        }
+      }
+
       const runAction = (todo, action, extra) => {
         if (action === 'update') {
           setEditing({
@@ -738,11 +761,11 @@ window.__ModuleLoader__.load({
           return
         }
         if (action === 'answer') {
-          setPromptDraft({ id: todo.id, kind: 'answer', text: '' })
+          openPrompt(todo, 'answer')
           return
         }
         if (action === 'void') {
-          setPromptDraft({ id: todo.id, kind: 'void', text: '' })
+          openPrompt(todo, 'void')
           return
         }
         if (action === 'request') {
@@ -750,7 +773,7 @@ window.__ModuleLoader__.load({
           return
         }
         if (action === 'reject' && todo.status === 'review') {
-          setPromptDraft({ id: todo.id, kind: 'reject', text: '' })
+          openPrompt(todo, 'reject')
           return
         }
         const label = actionLabel(todo, action)
@@ -1409,31 +1432,39 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'todoButton', type: 'button', onClick: () => setEditing(null) }, '取消'))))
             } else {
               const moves = statusMoves(record)
+              // The reason / answer box is what the click asked for, so it leads
+              // the detail instead of trailing the record: a head button on a
+              // row that was collapsed opens the row, and the input lands right
+              // under it rather than below a long history.
+              const draftBlock = draftOpen
+                ? h('div', { className: 'todoPromptDraft', key: 'draft' },
+                  h('div', { className: 'todoMeta' },
+                    promptDraft.kind === 'answer' ? '回答 AI 的问题：' : promptDraft.kind === 'void' ? '作废原因（可留空）：' : '打回原因：'),
+                  h('textarea', {
+                    className: 'todoTextarea',
+                    autoFocus: true,
+                    value: promptDraft.text,
+                    placeholder: promptDraft.kind === 'void' ? '例如：需求变了，不做了' : '把 AI 需要的信息写清楚',
+                    onChange: (event) => setPromptDraft({ ...promptDraft, text: event.target.value }),
+                  }),
+                  h('div', { className: 'todoToolbar' },
+                    h('button', {
+                      className: 'todoButton',
+                      type: 'button',
+                      'data-primary': 'true',
+                      disabled: busy || (promptDraft.kind !== 'void' && promptDraft.text.trim() === ''),
+                      onClick: () => void submitPromptDraft(),
+                    }, '提交'),
+                    h('button', { className: 'todoButton', type: 'button', onClick: () => setPromptDraft(null) }, '取消')))
+                : null
               rowsHtml.push(h('div', { className: 'todoDetail', key: 'detail' },
+                draftBlock,
                 ...fields,
                 pickerOpen
                   ? pickerBlock
                   : draftOpen
-                    ? h('div', { className: 'todoPromptDraft', key: 'draft' },
-                    h('div', { className: 'todoMeta' },
-                      promptDraft.kind === 'answer' ? '回答 AI 的问题：' : promptDraft.kind === 'void' ? '作废原因（可留空）：' : '打回原因：'),
-                    h('textarea', {
-                      className: 'todoTextarea',
-                      autoFocus: true,
-                      value: promptDraft.text,
-                      placeholder: promptDraft.kind === 'void' ? '例如：需求变了，不做了' : '把 AI 需要的信息写清楚',
-                      onChange: (event) => setPromptDraft({ ...promptDraft, text: event.target.value }),
-                    }),
-                    h('div', { className: 'todoToolbar' },
-                      h('button', {
-                        className: 'todoButton',
-                        type: 'button',
-                        'data-primary': 'true',
-                        disabled: busy || (promptDraft.kind !== 'void' && promptDraft.text.trim() === ''),
-                        onClick: () => void submitPromptDraft(),
-                      }, '提交'),
-                      h('button', { className: 'todoButton', type: 'button', onClick: () => setPromptDraft(null) }, '取消')))
-                  : h('div', { className: 'todoToolbar', key: 'rowActions' },
+                    ? null
+                    : h('div', { className: 'todoToolbar', key: 'rowActions' },
                     h('button', {
                       className: 'todoButton',
                       type: 'button',
