@@ -102,6 +102,21 @@ window.__ModuleLoader__.load({
     const DANGER_ACTIONS = ['void', 'reject']
     /** Actions the row renders as a primary call to action. */
     const PRIMARY_ACTIONS = ['accept', 'confirm', 'request', 'complete']
+    /**
+     * The status each action ends on. `update` keeps the current status and
+     * `request` only hands the todo off, so neither is a move; `reject` is
+     * special-cased in `statusMoves` because it voids a proposal but sends a
+     * submission back to `working`.
+     */
+    const ACTION_TARGETS = {
+      accept: 'open',
+      claim: 'working',
+      answer: 'working',
+      complete: 'done',
+      confirm: 'done',
+      reopen: 'open',
+      void: 'void',
+    }
 
     const CSS = `
 .todoPage{box-sizing:border-box;height:100%;overflow:auto;padding:18px 22px 28px;display:flex;flex-direction:column;gap:12px;color:var(--dsw-alias-label-primary,#1f2328);font-size:13px;line-height:20px}
@@ -136,6 +151,8 @@ window.__ModuleLoader__.load({
 .todoPriority{font-size:11px;color:var(--dsw-alias-label-caption,#8b949e)}
 .todoTag{border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.14));padding:1px 8px;font-size:11px;color:var(--dsw-alias-label-secondary,#57606a)}
 .todoActions{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.todoStatusMove{display:inline-flex;align-items:center;gap:4px}
+.todoStatusMove .todoSelect{padding:3px 6px;font-size:11px}
 .todoDetail{display:flex;flex-direction:column;gap:8px;border-top:.5px dashed var(--dsw-alias-border-l3,rgba(127,127,127,.35));padding-top:8px}
 .todoField{display:flex;flex-direction:column;gap:3px}
 .todoFieldLabel{font-size:11px;color:var(--dsw-alias-label-caption,#8b949e)}
@@ -260,6 +277,31 @@ window.__ModuleLoader__.load({
       // todo back to the queue, which is a different promise and gets its own name.
       if (action === 'reopen' && todo.status !== 'done' && todo.status !== 'void') return '重开待办'
       return ACTION_LABELS[action] ?? action
+    }
+
+    /**
+     * The status changes the user can make on one todo, one entry per target.
+     * Derived from the server's action list, so the panel cannot offer a move
+     * the store would refuse. `update` keeps the status and `request` only hands
+     * the todo off; both are skipped. When two actions end on the same status
+     * (`complete` and `confirm` both reach `done`) the first one wins.
+     * @param {{ status: string, actions?: string[] }} todo - summary or detail record.
+     * @returns {Array<{ action: string, status: string }>} legal moves, in menu order.
+     */
+    function statusMoves(todo) {
+      const current = todo?.status
+      const seen = new Set()
+      const moves = []
+      for (const action of todo?.actions ?? []) {
+        if (action === 'update' || action === 'request') continue
+        const target = action === 'reject'
+          ? (current === 'proposed' ? 'void' : 'working')
+          : ACTION_TARGETS[action]
+        if (typeof target !== 'string' || target === current || seen.has(target)) continue
+        seen.add(target)
+        moves.push({ action, status: target })
+      }
+      return moves
     }
 
     /**
@@ -1366,6 +1408,7 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'todoButton', type: 'button', 'data-primary': 'true', disabled: busy, onClick: () => void saveEdit() }, '保存'),
                   h('button', { className: 'todoButton', type: 'button', onClick: () => setEditing(null) }, '取消'))))
             } else {
+              const moves = statusMoves(record)
               rowsHtml.push(h('div', { className: 'todoDetail', key: 'detail' },
                 ...fields,
                 pickerOpen
@@ -1397,6 +1440,32 @@ window.__ModuleLoader__.load({
                       disabled: busy,
                       onClick: () => runAction(record, 'update'),
                     }, actionLabel(record, 'update')),
+                    moves.length > 0
+                      ? h('label', { className: 'todoStatusMove' },
+                        h('span', { className: 'todoMeta' }, '改状态'),
+                        h('select', {
+                          className: 'todoSelect',
+                          'aria-label': '改状态',
+                          value: '',
+                          disabled: busy,
+                          onChange: (event) => {
+                            const action = event.target.value
+                            // The select always shows the current status. Reset it
+                            // before running the action, which brings its own
+                            // confirmation dialog or reason prompt.
+                            event.target.value = ''
+                            if (action !== '') runAction(record, action)
+                          },
+                        },
+                        h('option', { value: '' }, STATUS_META[record.status]?.label ?? record.status),
+                        moves.map((move) => {
+                          const target = STATUS_META[move.status]?.label ?? move.status
+                          // The target status is the point; the action only adds
+                          // information when it is not obvious from the target.
+                          const hint = move.action === 'void' ? '' : `（${actionLabel(record, move.action)}）`
+                          return h('option', { key: move.action, value: move.action }, `→ ${target}${hint}`)
+                        })))
+                      : null,
                     todo.status === 'blocked'
                       ? h('button', {
                         className: 'todoButton',
@@ -1475,6 +1544,7 @@ window.__ModuleLoader__.load({
     exports.folderName = folderName
     exports.matchesFilter = matchesFilter
     exports.actionLabel = actionLabel
+    exports.statusMoves = statusMoves
     exports.totalOf = totalOf
     exports.countOf = countOf
     exports.attentionOf = attentionOf

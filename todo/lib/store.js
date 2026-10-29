@@ -104,8 +104,11 @@ const USER_ACTIONS = {
   working: ['complete', 'update', 'reopen', 'void'],
   blocked: ['answer', 'complete', 'update', 'reopen', 'void'],
   review: ['confirm', 'reject', 'update', 'void'],
-  done: ['reopen'],
-  void: ['reopen'],
+  // An archived todo stays editable. A finished todo may still collect a
+  // follow-up note without being reopened (and losing its confirmation), and a
+  // voided one may be corrected before the user brings it back.
+  done: ['reopen', 'update'],
+  void: ['reopen', 'update'],
 }
 
 /**
@@ -143,7 +146,9 @@ const TRANSITIONS = {
   // stuck todo off again without losing the fact that it was restarted.
   reopen: { from: ['done', 'void', 'review', 'proposed', 'working', 'blocked'], to: 'open', actors: ['user'] },
   void: { from: STATUSES.filter((status) => status !== 'void'), to: 'void', actors: ['ai', 'user'] },
-  update: { from: STATUSES.filter((status) => status !== 'void'), to: null, actors: ['ai', 'user', 'system'] },
+  // `update` keeps the status, so it applies to every status including the
+  // archived ones: editing a `done` or `void` todo does not revive it.
+  update: { from: [...STATUSES], to: null, actors: ['ai', 'user', 'system'] },
 }
 
 /**

@@ -145,7 +145,7 @@ try {
   assert.equal(confirmed.body.todo.status, 'done', 'a user confirmation completes the todo in one step')
   assert.equal(confirmed.body.todo.approval.by, 'user')
   assert.equal(confirmed.body.todo.completion.by, 'user')
-  assert.deepEqual(confirmed.body.todo.actions, ['reopen'], 'a done todo is reopened, never confirmed again')
+  assert.deepEqual(confirmed.body.todo.actions, ['reopen', 'update'], 'a done todo can be edited or reopened, never confirmed again')
   console.log('✓ the user confirmed in the panel, which completed the todo in one step')
 
   // --- 7. the user can also add and finish a todo directly ------------------
@@ -158,6 +158,17 @@ try {
   assert.equal(direct.body.todo.completion.by, 'user')
   assert.equal(direct.body.todo.approval.by, 'user', 'the user action itself is the confirmation')
   console.log('✓ a manually added todo can be marked done by the user directly')
+
+  // A finished todo stays editable: the note lands, the status and the approval
+  // stay put, and the panel is offered `update` next to `reopen`.
+  const editedDone = await panel(api, 'POST', '/action', withProject({ id: manualId, action: 'update', detail: '想到一点补充' }))
+  assert.equal(editedDone.status, 200)
+  assert.equal(editedDone.body.todo.status, 'done')
+  assert.deepEqual(editedDone.body.todo.actions, ['reopen', 'update'])
+  const editedDetail = await panel(api, 'GET', `/todo?id=${manualId}&project=${encodeURIComponent(cwd)}`)
+  assert.equal(editedDetail.body.todo.detail, '想到一点补充')
+  assert.equal(editedDetail.body.todo.approval.by, 'user', 'editing is not a fresh confirmation')
+  console.log('✓ a finished todo stays editable without being reopened')
 
   // --- 8. void needs an explicit confirmation, and a reason ---------------
   const refusedVoid = await call(ctx, 'todo_void', { id: manualId, reason: 'x', confirm: false }, { expectError: true })

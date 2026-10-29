@@ -867,7 +867,7 @@ describe('TodoStore.act — refusals and special transitions', () => {
     await assert.rejects(() => store.act({ id, action: 'reject', actor: 'user' }), /reject applies to a proposed or review todo/)
   })
 
-  it('edits a todo with `update`, and refuses an empty patch or a void todo', async () => {
+  it('edits a todo with `update`, including an archived one, and refuses an empty patch', async () => {
     const cwd = await dir('act-update')
     const store = makeStore(cwd, { now: clock() })
     const id = (await store.create({ items: [{ title: 'before', tags: ['a'] }] })).todos[0].id
@@ -882,9 +882,27 @@ describe('TodoStore.act — refusals and special transitions', () => {
     await assert.rejects(() => store.act({ id, action: 'update', actor: 'user' }), /update needs at least one of/)
     await assert.rejects(() => store.act({ id, action: 'update', actor: 'user', title: '  ' }), /title must be a non-blank string/)
 
-    await store.act({ id, action: 'void', actor: 'user' })
-    await assert.rejects(() => store.act({ id, action: 'update', actor: 'user', title: 'never' }), /update is not allowed on a void todo/)
+    await store.act({ id, action: 'void', actor: 'user', reason: 'changed my mind' })
+    // A voided todo stays editable: a follow-up note can be added without
+    // reopening it, and the void record keeps its reason.
+    const edited = await store.act({ id, action: 'update', actor: 'user', detail: '想到一点补充' })
+    assert.equal(edited.todo.status, 'void')
+    assert.equal(edited.todo.detail, '想到一点补充')
+    assert.equal(edited.todo.voided.reason, 'changed my mind')
     await assert.rejects(() => store.act({ id, action: 'void', actor: 'user' }), /void is not allowed on a void todo/)
+  })
+
+  it('edits a finished todo without leaving `done`', async () => {
+    const cwd = await dir('act-update-done')
+    const store = makeStore(cwd)
+    const id = (await store.create({ items: [{ title: 'finished' }] })).todos[0].id
+    await store.act({ id, action: 'complete', actor: 'user' })
+    const updated = await store.act({ id, action: 'update', actor: 'user', detail: '再补充一句' })
+    assert.equal(updated.todo.status, 'done')
+    assert.equal(updated.todo.detail, '再补充一句')
+    // The confirmation stays on record: editing is not a fresh submission.
+    assert.equal(updated.todo.approval.by, 'user')
+    assert.equal(updated.todo.completion.by, 'user')
   })
 
   it('`reopen` clears the completion, the approval, and the void record', async () => {
@@ -1107,8 +1125,9 @@ describe('summaries and action tables', () => {
     assert.deepEqual(availableActions('working', 'user'), ['complete', 'update', 'reopen', 'void'])
     assert.deepEqual(availableActions('blocked', 'user'), ['answer', 'complete', 'update', 'reopen', 'void'])
     assert.deepEqual(availableActions('review', 'user'), ['confirm', 'reject', 'update', 'void'])
-    assert.deepEqual(availableActions('done', 'user'), ['reopen'])
-    assert.deepEqual(availableActions('void', 'user'), ['reopen'])
+    // Archived todos stay editable in place; `reopen` is still the only way out.
+    assert.deepEqual(availableActions('done', 'user'), ['reopen', 'update'])
+    assert.deepEqual(availableActions('void', 'user'), ['reopen', 'update'])
     // The panel asks as the user; an unknown status simply offers nothing.
     assert.deepEqual(availableActions('proposed'), ['accept', 'complete', 'update', 'void'])
     assert.deepEqual(availableActions('nonsense'), [])

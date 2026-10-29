@@ -130,7 +130,7 @@ describe('todo workflow invariants', () => {
     assert.deepEqual(violations, [])
     assert.equal(succeeded + refused, STATUSES.length * Object.keys(ACTIONS).length * 2)
     // A sanity floor: the matrix must actually exercise both outcomes. It tracks
-    // the legal-action table (currently 56 / 98), so it is a floor, not a count.
+    // the legal-action table (currently 58 / 96), so it is a floor, not a count.
     assert.ok(succeeded >= 50, `only ${succeeded} combinations succeeded`)
     assert.ok(refused >= 90, `only ${refused} combinations were refused`)
   })

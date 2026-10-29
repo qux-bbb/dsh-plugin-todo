@@ -455,6 +455,22 @@ describe('todo client bundle', () => {
     // An unknown action falls back to its own name.
     assert.equal(clientModule.actionLabel({ status: 'open' }, 'mystery'), 'mystery')
 
+    // The status dropdown derives its choices from the server's action list,
+    // one entry per target, so it cannot offer a move the store would refuse.
+    assert.deepEqual(clientModule.statusMoves({ status: 'proposed', actions: ['accept', 'complete', 'update', 'void'] }),
+      [{ action: 'accept', status: 'open' }, { action: 'complete', status: 'done' }, { action: 'void', status: 'void' }])
+    // A submission goes back to `working` (reject), not to `void`.
+    assert.deepEqual(clientModule.statusMoves({ status: 'review', actions: ['confirm', 'reject', 'update', 'void'] }),
+      [{ action: 'confirm', status: 'done' }, { action: 'reject', status: 'working' }, { action: 'void', status: 'void' }])
+    assert.deepEqual(clientModule.statusMoves({ status: 'blocked', actions: ['answer', 'complete', 'update', 'reopen', 'void'] }),
+      [{ action: 'answer', status: 'working' }, { action: 'complete', status: 'done' }, { action: 'reopen', status: 'open' }, { action: 'void', status: 'void' }])
+    // An archived todo has exactly one move: back to the queue. Editing it is
+    // not a move, and a todo without an action list offers nothing.
+    assert.deepEqual(clientModule.statusMoves({ status: 'done', actions: ['reopen', 'update'] }), [{ action: 'reopen', status: 'open' }])
+    assert.deepEqual(clientModule.statusMoves({ status: 'void', actions: ['reopen', 'update'] }), [{ action: 'reopen', status: 'open' }])
+    assert.deepEqual(clientModule.statusMoves({ status: 'open', actions: ['request', 'update'] }), [])
+    assert.deepEqual(clientModule.statusMoves({ status: 'open' }), [])
+
     const state = {
       levels: {
         project: { enabled: true, total: 7, counts: { proposed: 2, review: 1, blocked: 1, open: 3 } },
@@ -828,6 +844,99 @@ describe('todo panel rendering', () => {
       assert.ok(labels.includes('编辑待办'), `missing 编辑待办: ${labels.join(' | ')}`)
       // The old label named the detail section instead of what the button edits.
       assert.equal(texts(tree).includes('编辑详情'), false)
+    } finally {
+      mount.unmount()
+      globalThis.fetch = previousFetch
+      clientModule.activeSession.id = null
+      clientModule.activeSession.cwd = null
+    }
+  })
+
+  it('moves an archived todo back to the queue through the status dropdown', async () => {
+    const clientModule = loadClientModule()
+    const previousFetch = globalThis.fetch
+    const cwd = 'D:\\work\\proj'
+    const at = '2026-05-01T00:00:00.000Z'
+    const file = `${cwd}\\.dsh\\todo\\todos.jsonl`
+    const summary = (id, row) => ({
+      id,
+      scope: 'project',
+      preview: '',
+      acceptance: '',
+      tags: [],
+      question: null,
+      answerCount: 0,
+      submission: null,
+      accepted: null,
+      approval: null,
+      completion: null,
+      voided: null,
+      at,
+      updatedAt: at,
+      ...row,
+    })
+    // A finished todo: the store offers it `reopen` and `update`, so the status
+    // control has exactly one target and editing is not one of them.
+    const row = summary('p-done', { title: '已经做完', status: 'done', priority: 'normal', origin: 'user', actions: ['reopen', 'update'] })
+    const payload = {
+      level: 'both',
+      defaultScope: 'project',
+      cwd,
+      projectRoot: cwd,
+      current: { source: 'manual', path: cwd, projectRoot: cwd },
+      projects: [],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
+      canDeliver: false,
+      levels: {
+        global: { scope: 'global', enabled: true, dir: 'D:\\home\\todo', file: 'D:\\home\\todo\\todos.jsonl', total: 0, counts: {}, todos: [] },
+        project: {
+          scope: 'project',
+          enabled: true,
+          dir: `${cwd}\\.dsh\\todo`,
+          file,
+          total: 1,
+          counts: { done: 1 },
+          todos: [row],
+        },
+      },
+    }
+    const posted = []
+    globalThis.fetch = async (url, options) => {
+      const address = String(url)
+      if (options?.method === 'POST' && address.includes('/action')) posted.push(JSON.parse(options.body))
+      if (/\/todo\?/.test(address)) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, todo: { ...row, detail: '', acceptance: '', projectRoot: cwd, answers: [], history: [], file } }) }
+      }
+      return { ok: true, status: 200, json: async () => payload }
+    }
+    clientModule.activeSession.id = null
+    clientModule.activeSession.cwd = null
+    const mount = createMount(clientModule.TodoPage)
+    try {
+      let tree = await mount.settle()
+      // The status control belongs to the expanded detail, like the edit form.
+      assert.equal(elements(tree, 'select').some((control) => control.props['aria-label'] === '改状态'), false)
+
+      const head = elements(tree, 'div').find((node) => node.props.className === 'todoItemHead')
+      assert.ok(head !== undefined, 'the row head is what expands the detail')
+      head.props.onClick()
+      tree = await mount.settle()
+
+      const select = elements(tree, 'select').find((control) => control.props['aria-label'] === '改状态')
+      assert.ok(select !== undefined, 'the expanded detail offers the status control')
+      // The control always displays the current status, not a target.
+      assert.equal(select.props.value, '')
+      const options = elements(select, 'option').map((option) => texts(option).join(''))
+      assert.deepEqual(options, ['已完成', '→ 待办（重新打开）'])
+      assert.ok(texts(tree).includes('改状态'))
+
+      // Picking a target runs the action behind it; the dropdown itself carries
+      // no authority of its own.
+      select.props.onChange({ target: { value: 'reopen' } })
+      tree = await mount.settle()
+      assert.equal(posted.length, 1)
+      assert.equal(posted[0].action, 'reopen')
+      assert.equal(posted[0].id, 'p-done')
     } finally {
       mount.unmount()
       globalThis.fetch = previousFetch
