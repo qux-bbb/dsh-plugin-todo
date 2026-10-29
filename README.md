@@ -3,121 +3,94 @@
 [![npm](https://img.shields.io/npm/v/@qux-bbb/dsh-plugin-todo)](https://www.npmjs.com/package/@qux-bbb/dsh-plugin-todo)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-一个 DeepSeek Harness（DSH）插件：**人和 AI 协作的待办清单，所有"确认"都留在人手里**。
-
-AI 提的待办要等你确认才算数；AI 做完只能提交"待确认"，**你确认即完成**——模型没有任何路径自己把待办标成完成。规则写在 `lib/store.js` 里。
-
-```
-AI propose → proposed ─用户 accept→ open ─AI claim→ working ─AI submit→ review
-            └用户 reject→ void                        └用户 confirm→ done
-```
-
-版本记录与各版本变更见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
+DeepSeek Harness（DSH）的待办清单插件：**AI 可以提待办、认领、提交，但只有你能确认完成。**
 
 ## 安装
 
-### 从 npm 安装
-
-需要 DSH 自带 `dsh plugin` 命令。包声明了 `dsh.bundle`，装进 profile 后这一层会按**包名**自动接入：
-
 ```sh
+# 用 DSH 自带的插件命令（npm 包自带 dsh.bundle，无需手写路径）
 dsh plugin --profile desktop add @qux-bbb/dsh-plugin-todo
 ```
 
-装完重启一次应用。没有该命令、或者要装进 `desktop` 这类 `dsh plugin` 不便处理的 profile，用下面的手动安装器。
-
-### 从源码安装
+从源码或离线安装时，用仓库里的安装器（只用 Node 内置模块，不需要 `npm install`）：
 
 ```powershell
 git clone https://github.com/qux-bbb/dsh-plugin-todo.git
 cd dsh-plugin-todo
 
-# 用 DSH 自带的 node 跑安装脚本，不必单独装 Node
+# 用 DSH 自带的 node，不必单独装 Node
 $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe"
 & $node scripts\install-todo.mjs --profile desktop
 ```
 
-那台机器上没有 git 的话，在 GitHub 页面 Code → Download ZIP 解压即可，脚本只需要这个目录。
+它会：① 把 `todo/` 拷到 `<profile>/plugins/todo`；② 在 `<profile>/cordis.patch.yml` 写入一段带首尾标记的托管条目。
 
-**前置条件：DSH 至少启动过一次**——`$DSH_HOME`（默认 `~/.dsh`）、`profiles\<name>` 目录和自带的 node 运行时都是那时建好的。安装脚本只用 Node 内置模块，**不需要 `npm install`**。它做两件事：
+装完**重启一次应用**（浏览器半随宿主启动加载）。前置条件：DSH 至少启动过一次。
 
-1. 把 `todo/` 拷进 `<profile>/plugins/todo`（**不含 `test/`**）
-2. 在 `<profile>/cordis.patch.yml` 写入一段带首尾标记的托管条目
-
-装完 **重启一次应用**：宿主半会热重载，但浏览器半是随宿主启动加载的。
-
-### 参数
+常用参数：
 
 | 参数 | 作用 |
 |---|---|
-| `--profile <name>` | 装到哪个 profile，默认 `desktop`；填你实际在跑的那个 |
-| `--level both\|global\|project` | 暴露哪几种待办层级，默认 `both` |
-| `--default-scope global\|project` | 调用不写 `scope` 时用哪层，默认 `project` |
-| `--scope home` | 装到 `$DSH_HOME/plugins/todo`，**所有 profile 都生效**（此时 patch 里写的是绝对 `file://` 路径） |
-| `--dry-run` | 只打印打算写的文件，不动磁盘 |
-| `--verify` | 调真实 loader 的 `--dump-config` 校验条目；`desktop` 会被主动跳过，其他 profile 必须已被 harness 注册 |
-| `--uninstall` | 卸载 |
+| `--profile <name>` | 装到哪个 profile，默认 `desktop` |
+| `--scope home` | 装到 `$DSH_HOME/plugins/todo`，所有 profile 生效 |
+| `--level both\|global\|project` | 启用哪些待办层级，默认 `both` |
+| `--default-scope global\|project` | 不写 `scope` 时的默认层级，默认 `project` |
+| `--dry-run` / `--verify` | 只预览 / 用真实 loader 校验条目 |
 
-（下面的 `$node` 沿用上面那个自带运行时的定义；换成 `node` 也可以，只要版本够新。）
+> `# >>> dsh-plugin-todo >>>` 与 `# <<< dsh-plugin-todo <<<` 之间的内容每次安装都会被整段重写，你自己的 patch 条目要写在标记**外面**。
 
-```powershell
-& $node scripts\install-todo.mjs --profile desktop --scope home            # 全局生效
-& $node scripts\install-todo.mjs --profile desktop --default-scope global  # 改默认层级
-& $node scripts\install-todo.mjs --profile desktop --dry-run               # 只预览
-```
+## 使用
 
-### 更新
+- 模型工具：`todo_propose` `todo_list` `todo_get` `todo_claim` `todo_update` `todo_submit` `todo_void`
+- 人类命令：`/todo [add <标题> | done <id> | show <id>]`
+- 面板：侧边栏「待办」，跟随当前会话所在项目；可筛选、搜索、手动添加、看/改详情、行内操作（作废、打回重做）
+- 「交给 AI 完成」把待办投递到某条会话（含新建、冷会话）；已经交给 AI 的用「重开待办」退回队列
+- 归档后的待办仍可编辑补正，状态不变；「改状态」只列服务端允许的目标
+- 存储：`<DSH_HOME>/todo/todos.jsonl`（全局）、`<项目根>/.dsh/todo/todos.jsonl`（项目）
+
+## 更新
+
+按当初的安装方式选一条，装完都重启应用。
+
+**脚本安装的**：重跑同一个脚本即可，先拿到新代码——有 git 就 `git pull`，没有就下载新 ZIP 解压，再到新目录里执行：
 
 ```powershell
 git pull
 & $node scripts\install-todo.mjs --profile desktop
 ```
 
-然后重启应用。脚本**先写文件、最后写 patch**，这样 watching 的宿主不会看到一个指向不存在文件的条目。
+> 托管条目每次都会按**这次传的参数**重写 `level` / `defaultScope`，所以改过层级的话要带上同样的参数；`--scope home` 装的要带 `--scope home`，否则会在 profile 里再装一份。
 
-### 卸载
+**npm 安装的**：直接装最新版，或在「插件」页卸载后重装（desktop profile 需先完全退出应用）：
+
+```sh
+dsh plugin --profile desktop add @qux-bbb/dsh-plugin-todo@latest
+```
+
+## 卸载
 
 ```powershell
 & $node scripts\install-todo.mjs --profile desktop --uninstall
 ```
 
-只删它自己那段托管条目和拷贝进去的文件；同一文件里属于你的其他条目与注释都保留。
-
-### 装完没生效？
-
-1. **重启应用** —— 只刷新页面可能还是旧的浏览器半。
-2. 条目仍是 `status: inactive` —— 把某个 config 值改一次再改回来（例如 `--default-scope global` 再改回 `project`），或者重启：宿主不会重试**未发生变化**的 inactive 条目。
-3. 还不行就 `--dry-run` 看它打算写什么，再核对 `<profile>/cordis.patch.yml` 里有没有 `id: todo`。
-
-### ⚠️ 别往托管标记中间塞东西
-
-`# >>> dsh-plugin-todo (...) >>>` 与 `# <<< dsh-plugin-todo <<<` 之间的内容**每次重装都会被整段重写**。你自己的 patch 条目（例如 `permission-presets`）要写在标记**外面**，否则重装时会连同它一起被删掉。
-
-## 使用
-
-- 工具：`todo_propose` `todo_list` `todo_get` `todo_claim` `todo_update` `todo_submit` `todo_void`，另有 `/todo` 命令
-- 面板：侧边栏「待办」，跟随当前会话所在项目；标题下方按项目与全局列出待办数与待你处理数，点一下即可切换；筛选、搜索、手动添加、看/改详情、行内操作（「作废」「打回重做」在该行直接展开原因框，不用先展开详情）
-- 「交给 AI 完成」只在「待办」状态出现；已经交给 AI 的待办（「AI 进行中」/「待你补充」）改用「重开待办」退回待办，再重新交付。可选投递到哪条会话（含新建会话），冷会话也能投
-- 归档后仍可维护：展开「已完成」或「已作废」的待办可以直接「编辑待办」补充/修正，状态不变，确认与作废记录不丢；「改状态」下拉按服务端允许的动作列出能去的状态，选中即执行（例如退回「待办」继续做）
-- 存储：`<DSH_HOME>/todo/todos.jsonl`（全局）、`<项目根>/.dsh/todo/todos.jsonl`（项目）；配置项见 `lib/index.js` 的 `Config`
+只删它自己那段托管条目和拷贝进去的文件，同一文件里属于你的其他条目与注释都保留。
 
 ## 开发
 
 ```powershell
-powershell -File scripts\dev-link.ps1   # 链接 @deepseek-ai/* 到本仓库，仅为本地跑测试
-cd todo; node --test                    # 176 个单元测试
+powershell -File scripts\dev-link.ps1   # 链接 DSH 运行时包，仅本地跑测试用
+cd todo; node --test                    # 单元测试
 node scripts\smoke-runtime.mjs          # 端到端冒烟
 ```
 
-`dev-link.ps1` 是 Windows 专用（建目录 junction），且要求 DSH 已经跑过一次；Linux/macOS 上等价做法是手工软链：
+`dev-link.ps1` 是 Windows 专用（建目录 junction），且要求 DSH 已启动过一次；Linux/macOS 手工软链等价：
 
 ```bash
-mkdir -p node_modules
 ln -s "$DSH_HOME/profiles/node_modules/@deepseek-ai" node_modules/@deepseek-ai
 ln -s "$DSH_HOME/profiles/node_modules/react" node_modules/react
 ln -s "$DSH_HOME/profiles/node_modules/react-dom" node_modules/react-dom
 ```
 
-只有跑测试/冒烟需要这一步；**装插件本身不需要**。
+只有跑测试需要这一步，**装插件本身不需要**。
 
-MIT
+版本变更见 [docs/CHANGELOG.md](docs/CHANGELOG.md)。
