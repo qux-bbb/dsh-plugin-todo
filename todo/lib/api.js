@@ -158,7 +158,7 @@ export function buildRequestPrompt({ todo, projectRoot }) {
  * Build the todo panel API.
  * @param {object} options - API dependencies.
  * @param {(cwd: string) => import('./store.js').TodoStore} options.storeFor - store per session directory.
- * @param {() => Array<{ path: string, title: string }>} [options.listProjects] - registered project directories.
+ * @param {() => Array<{ path: string, title: string }>} [options.listProjects] - registered project directories; `/state` reports each one's todo count.
  * @param {(request: { headers: Record<string, unknown> }) => 401 | 403 | undefined} [options.admit] - the host's browser-session gate (`connection.requestRejection`); omitted means no gate.
  * @param {(sessionId: string) => string | undefined} [options.resolveSessionCwd] - working directory of a live session, so the panel follows the project the user is in.
  * @param {(input: { limit?: number }) => Promise<Array<Record<string, unknown>> | undefined>} [options.listSessions] - the host's session list, so the panel can offer a target picker; omitted means "current session only".
@@ -217,6 +217,67 @@ export function createTodoApi({ storeFor, listProjects = () => [], admit, resolv
   }
 
   /**
+   * How many todos of one project need a human decision, from its per-status
+   * counts. The overview is the only place that asks across projects, so the
+   * rule is read from `needsAttention` here rather than re-spelled.
+   * @param {Record<string, number>} counts - status counts of one project level.
+   * @returns {number} the number of todos waiting for the user.
+   */
+  const attentionIn = (counts) => Object.entries(counts)
+    .reduce((sum, [status, count]) => sum + (needsAttention(status) ? count : 0), 0)
+
+  /**
+   * One project's own todo counts, or its disabled marker. A project with no
+   * todo file simply reports zero; a project whose file cannot be read does too,
+   * so one bad workspace never takes the whole panel down.
+   * @param {import('./store.js').TodoStore} store - the project's store.
+   * @returns {Promise<{ enabled: boolean, total: number, attention: number }>} the counts.
+   */
+  const projectStats = async (store) => {
+    if (!store.scopes.includes('project')) return { enabled: false, total: 0, attention: 0 }
+    try {
+      // `limit: 1` asks for one row: the counts and the total still describe the
+      // whole level, and the overview never renders the rows themselves.
+      const listing = await store.list({ scope: 'project', limit: 1 })
+      return { enabled: true, total: listing.total, attention: attentionIn(listing.counts) }
+    } catch {
+      return { enabled: true, total: 0, attention: 0 }
+    }
+  }
+
+  /**
+   * Every registered project with how much work it holds, so the panel can show
+   * which projects have todos without the user selecting them one at a time.
+   *
+   * Only the `project` level is per project: a deployment that stores todos
+   * globally reports `enabled: false` and zeroes. Every workspace keeps its own
+   * row — the panel's project selector is built from this list — but the rows
+   * that resolve to the same project root share one counted read, because they
+   * also share one todo file.
+   * @returns {Promise<Array<Record<string, unknown>>>} one row per workspace, in the registry's order.
+   */
+  const projectsOverview = async () => {
+    /** @type {Array<{ path: string, title: string, store: import('./store.js').TodoStore }>} */
+    const listed = []
+    /** @type {Map<string, import('./store.js').TodoStore>} */
+    const storesByRoot = new Map()
+    for (const project of listProjects()) {
+      const path = typeof project?.path === 'string' ? project.path.trim() : ''
+      if (path.length === 0) continue
+      const store = storeFor(path)
+      listed.push({ path, title: project.title || path, store })
+      if (!storesByRoot.has(store.projectRoot)) storesByRoot.set(store.projectRoot, store)
+    }
+    const statsByRoot = new Map(await Promise.all([...storesByRoot].map(async ([root, store]) => [root, await projectStats(store)])))
+    return listed.map(({ path, title, store }) => ({
+      path,
+      title,
+      projectRoot: store.projectRoot,
+      ...statsByRoot.get(store.projectRoot),
+    }))
+  }
+
+  /**
    * The full panel state for one store.
    * @param {import('./store.js').TodoStore} store - the request's store.
    * @param {number | undefined} limit - maximum todos per level.
@@ -224,20 +285,26 @@ export function createTodoApi({ storeFor, listProjects = () => [], admit, resolv
    * @param {{ source: string, path: string, projectRoot: string }} current - the project this request resolved to.
    * @returns {Promise<Record<string, unknown>>} the state payload.
    */
-  const stateOf = async (store, limit, status, current) => ({
-    level: store.level,
-    defaultScope: store.defaultScope,
-    cwd: store.cwd,
-    projectRoot: store.projectRoot,
-    current,
-    projects: listProjects(),
-    statuses: [...STATUSES],
-    canDeliver: typeof deliverRequest === 'function',
-    levels: {
-      global: await levelOf(store, 'global', limit, status),
-      project: await levelOf(store, 'project', limit, status),
-    },
-  })
+  const stateOf = async (store, limit, status, current) => {
+    // The project overview and both levels are independent reads, so they run
+    // together: one slow project file must not serialize the panel's own list.
+    const [projects, global, project] = await Promise.all([
+      projectsOverview(),
+      levelOf(store, 'global', limit, status),
+      levelOf(store, 'project', limit, status),
+    ])
+    return {
+      level: store.level,
+      defaultScope: store.defaultScope,
+      cwd: store.cwd,
+      projectRoot: store.projectRoot,
+      current,
+      projects,
+      statuses: [...STATUSES],
+      canDeliver: typeof deliverRequest === 'function',
+      levels: { global, project },
+    }
+  }
 
   /**
    * One level's fresh listing after a mutation. Every todo is returned: rows are

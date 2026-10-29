@@ -326,6 +326,72 @@ describe('todo client bundle', () => {
     assert.equal(icon.children.length, 4)
   })
 
+  it('summarizes every project, keeping the current one first and live', () => {
+    const clientModule = loadClientModule()
+    const state = {
+      current: { source: 'manual', path: 'D:\\work\\b' },
+      projects: [
+        { path: 'D:\\work\\b', title: 'b', total: 1, attention: 0 },
+        { path: 'D:\\work\\a', title: 'a', total: 2, attention: 2 },
+        { path: 'D:\\work\\c', title: 'c', total: 0, attention: 0 },
+      ],
+      levels: {
+        // The live project level is authoritative for the current project: it is
+        // the copy mutations refresh, so the chip never lags behind an action.
+        project: { enabled: true, total: 4, counts: { proposed: 1, review: 0, blocked: 1, open: 2 } },
+      },
+    }
+    assert.deepEqual(clientModule.projectOverview(state), [
+      { path: 'D:\\work\\b', title: 'b', current: true, projectRoot: 'D:\\work\\b', total: 4, attention: 2 },
+      { path: 'D:\\work\\a', title: 'a', current: false, projectRoot: 'D:\\work\\a', total: 2, attention: 2 },
+      { path: 'D:\\work\\c', title: 'c', current: false, projectRoot: 'D:\\work\\c', total: 0, attention: 0 },
+    ])
+    // Before the first load there is nothing to summarize.
+    assert.deepEqual(clientModule.projectOverview(null), [])
+    assert.deepEqual(clientModule.projectOverview(undefined), [])
+
+    // The project the panel is addressing is listed even when it is not a
+    // registered workspace, labelled as the session's project.
+    assert.deepEqual(clientModule.projectOverview({
+      current: { source: 'session', path: 'D:\\files\\projects\\trusted_data' },
+      projects: [],
+      levels: { project: { enabled: true, total: 3, counts: { open: 3 } } },
+    }), [{
+      path: 'D:\\files\\projects\\trusted_data',
+      title: 'trusted_data（当前会话）',
+      current: true,
+      projectRoot: 'D:\\files\\projects\\trusted_data',
+      total: 3,
+      attention: 0,
+    }])
+
+    // A disabled project level cannot refresh the live numbers, so the row keeps
+    // what the server reported.
+    assert.deepEqual(clientModule.projectOverview({
+      current: { source: 'manual', path: 'D:\\work\\b' },
+      projects: [{ path: 'D:\\work\\b', title: 'b', total: 2, attention: 1 }],
+      levels: { project: { enabled: false, total: 0, counts: {} } },
+    })[0], { path: 'D:\\work\\b', title: 'b', current: true, projectRoot: 'D:\\work\\b', total: 2, attention: 1 })
+
+    // A registry row that repeats the current project never renders a second chip.
+    assert.equal(clientModule.projectOverview({
+      current: { source: 'manual', path: 'D:\\work\\b' },
+      projects: [{ path: 'D:\\work\\b', title: 'b', total: 1 }, { path: 'D:\\work\\b', title: 'b', total: 1 }],
+      levels: { project: { enabled: true, total: 1, counts: { open: 1 } } },
+    }).length, 1)
+
+    // Workspaces nested in one project root share that project's todo file, so
+    // they share one chip rather than showing the same count twice.
+    assert.deepEqual(clientModule.projectOverview({
+      current: { source: 'manual', path: 'D:\\work\\b' },
+      projects: [
+        { path: 'D:\\work\\repo', title: 'repo', projectRoot: 'D:\\work\\repo', total: 2, attention: 1 },
+        { path: 'D:\\work\\repo\\packages', title: 'pkg', projectRoot: 'D:\\work\\repo', total: 2, attention: 1 },
+      ],
+      levels: { project: { enabled: false, total: 0, counts: {} } },
+    }).map((row) => row.path), ['D:\\work\\b', 'D:\\work\\repo'])
+  })
+
   it('never lets the project dropdown name a different project than the one in use', () => {
     const clientModule = loadClientModule()
     const workspaces = [{ path: 'D:\\work\\a', title: 'a' }, { path: 'D:\\work\\b', title: 'b' }]
@@ -538,6 +604,143 @@ describe('todo panel rendering', () => {
       assert.match(rendered, /交给 AI 完成/)
       // Real state replaced the empty-state text.
       assert.equal(rendered.includes('这里还没有待办。'), false)
+      // The overview now carries the counts under the title. With only the
+      // current project holding todos it still shows that project and the global
+      // list, so the two totals never disappear from the page.
+      const projectChips = elements(tree, 'button').filter((button) => button.props.className === 'todoProject')
+      assert.deepEqual(projectChips.map((chip) => texts(chip).join(' ')), ['proj（当前会话） 2 1 待处理', '全局 0'])
+      // The header keeps just the call to action; the strip owns the totals.
+      assert.match(rendered, /需要你处理 1 条/)
+      assert.equal(rendered.includes('项目共'), false)
+      assert.equal(rendered.includes('全局共'), false)
+    } finally {
+      mount.unmount()
+      globalThis.fetch = previousFetch
+      clientModule.activeSession.id = null
+      clientModule.activeSession.cwd = null
+    }
+  })
+
+  it('shows the project and global counts under the title, and switches scope on click', async () => {
+    const clientModule = loadClientModule()
+    const requests = []
+    const previousFetch = globalThis.fetch
+    const cwd = 'D:\\work\\proj'
+    const other = 'D:\\work\\other'
+    const at = '2026-05-01T00:00:00.000Z'
+    const summary = (id, row) => ({
+      id,
+      scope: 'project',
+      preview: '',
+      acceptance: '',
+      tags: [],
+      question: null,
+      answerCount: 0,
+      submission: null,
+      accepted: null,
+      approval: null,
+      completion: null,
+      voided: null,
+      at,
+      updatedAt: at,
+      ...row,
+    })
+    /** One `/state` payload, with `projects` carrying each project's counts. */
+    const statePayload = (currentPath, level) => ({
+      level: 'both',
+      defaultScope: 'project',
+      cwd: currentPath,
+      projectRoot: currentPath,
+      current: { source: 'manual', path: currentPath, projectRoot: currentPath },
+      projects: [
+        { path: cwd, title: 'proj', projectRoot: cwd, enabled: true, total: 1, attention: 0 },
+        { path: other, title: 'other', projectRoot: other, enabled: true, total: 2, attention: 1 },
+        { path: 'D:\\work\\empty', title: 'empty', projectRoot: 'D:\\work\\empty', enabled: true, total: 0, attention: 0 },
+      ],
+      statuses: ['proposed', 'open', 'working', 'blocked', 'review', 'done', 'void'],
+      canDeliver: false,
+      levels: {
+        // The global list is shared by every project; it belongs on the same
+        // overview as the projects, not only in the header line.
+        global: {
+          scope: 'global',
+          enabled: true,
+          total: 3,
+          counts: { proposed: 1, done: 2 },
+          todos: [summary('g-one', {
+            scope: 'global',
+            title: 'shared task',
+            status: 'proposed',
+            priority: 'normal',
+            origin: 'ai',
+            actions: ['accept', 'complete', 'update', 'void'],
+          })],
+        },
+        project: {
+          scope: 'project',
+          enabled: true,
+          dir: `${currentPath}\\.dsh\\todo`,
+          file: `${currentPath}\\.dsh\\todo\\todos.jsonl`,
+          total: level.total,
+          counts: level.counts,
+          todos: level.todos ?? [],
+        },
+      },
+    })
+    const first = statePayload(cwd, {
+      total: 1,
+      counts: { open: 1 },
+      todos: [summary('p-one', { title: 'local task', status: 'open', priority: 'normal', origin: 'user', actions: ['request', 'complete', 'update', 'void'] })],
+    })
+    const second = statePayload(other, {
+      total: 2,
+      counts: { proposed: 1, open: 1 },
+      todos: [summary('p-two', { title: 'other task', status: 'proposed', priority: 'normal', origin: 'ai', actions: ['accept', 'complete', 'update', 'void'] })],
+    })
+    globalThis.fetch = async (url) => {
+      const address = decodeURIComponent(String(url))
+      requests.push(address)
+      return { ok: true, status: 200, json: async () => (address.includes(`project=${other}`) ? second : first) }
+    }
+    clientModule.activeSession.id = null
+    clientModule.activeSession.cwd = null
+    const mount = createMount(clientModule.TodoPage)
+    try {
+      let tree = await mount.settle()
+      const chips = () => elements(tree, 'button').filter((button) => button.props.className === 'todoProject')
+      assert.deepEqual(chips().map((chip) => texts(chip).join(' ')), ['proj 1', 'other 2 1 待处理', '全局 3 1 待处理'])
+      // A project with no todos is not listed on the strip.
+      assert.equal(chips().length, 3)
+      assert.ok(chips().every((chip) => texts(chip).join('').includes('empty') === false))
+      // The strip sits directly below the title, above both toolbars.
+      const head = elements(tree, 'div').find((node) => node.props.className === 'todoHead')
+      assert.deepEqual(
+        head.children.slice(0, 3).map((child) => child.props.className),
+        ['todoTitleRow', 'todoProjects', 'todoToolbar'],
+      )
+      // The dropdown names each project's count as well, so the choice is
+      // informed even while the strip is collapsed out of the way.
+      assert.deepEqual(elements(tree, 'option').map((option) => texts(option).join('')), [
+        'proj · 1 条',
+        'other · 2 条',
+        'empty',
+      ])
+
+      // Clicking another project asks the API for that project.
+      chips()[1].props.onClick()
+      tree = await mount.settle()
+      assert.ok(requests.some((address) => address.includes(`project=${other}`)), requests.join(' | '))
+      // The clicked project is now the current chip and reads its fresh level.
+      assert.deepEqual(chips().map((chip) => chip.props['data-active']), ['true', 'false', 'false'])
+      assert.equal(texts(chips()[0]).join(' '), 'other 2 1 待处理')
+
+      // The global chip switches to the list every project shares.
+      chips()[2].props.onClick()
+      tree = await mount.settle()
+      assert.deepEqual(chips().map((chip) => chip.props['data-active']), ['false', 'false', 'true'])
+      assert.match(texts(tree).join(' | '), /shared task/)
+      assert.equal(texts(tree).join(' | ').includes('other task'), false)
+      assert.equal(requests.length, 2, 'switching scope reuses the levels already loaded')
     } finally {
       mount.unmount()
       globalThis.fetch = previousFetch

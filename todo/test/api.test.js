@@ -9,7 +9,7 @@
  * the request body claims.
  */
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -36,7 +36,7 @@ after(async () => {
  * @param {string} name - subdirectory that isolates this test's todos.
  * @param {object} [options] - deployment overrides.
  */
-function makeApi(name, { level = 'both', defaultScope = 'project', projects = [], sessions = {}, deliverRequest } = {}) {
+function makeApi(name, { level = 'both', defaultScope = 'project', projects = [], sessions = {}, deliverRequest, markers = [] } = {}) {
   const stores = new Map()
   const storeFor = (cwd) => {
     let store = stores.get(cwd)
@@ -47,7 +47,7 @@ function makeApi(name, { level = 'both', defaultScope = 'project', projects = []
         defaultScope,
         dshHome: root,
         globalDir: join(cwd, '.global'),
-        projectRootMarkers: [],
+        projectRootMarkers: markers,
       })
       stores.set(cwd, store)
     }
@@ -166,7 +166,14 @@ describe('todo api /state', () => {
     assert.equal(response.body.cwd, api.cwd)
     assert.equal(response.body.projectRoot, api.cwd)
     assert.deepEqual(response.body.current, { source: 'manual', path: api.cwd, projectRoot: api.cwd })
-    assert.deepEqual(response.body.projects, [{ path: project, title: 'proj' }])
+    assert.deepEqual(response.body.projects, [{
+      path: project,
+      title: 'proj',
+      projectRoot: project,
+      enabled: true,
+      total: 0,
+      attention: 0,
+    }])
     assert.deepEqual(response.body.statuses, STATUSES)
     assert.equal(response.body.canDeliver, false)
 
@@ -194,6 +201,56 @@ describe('todo api /state', () => {
     assert.equal(response.status, 200)
     assert.equal(response.body.levels.global.enabled, true)
     assert.deepEqual(response.body.levels.project, { scope: 'project', enabled: false, todos: [], total: 0, counts: {} })
+  })
+
+  it('reports how many todos each project holds, and how many need the user', async () => {
+    const busy = join(project, 'overview-busy')
+    const quiet = join(project, 'overview-quiet')
+    const api = makeApi('overview', {
+      projects: [{ path: busy, title: 'busy' }, { path: quiet, title: 'quiet' }],
+    })
+    await api.storeFor(busy).create({ items: [{ title: 'model idea' }], origin: 'ai', scope: 'project' })
+    await api.storeFor(busy).create({ items: [{ title: 'user task' }], origin: 'user', scope: 'project' })
+    const response = await api.send('GET', '/state', { query: { project: busy } })
+    assert.equal(response.status, 200)
+    assert.deepEqual(
+      response.body.projects.map(({ path, title, enabled, total, attention }) => ({ path, title, enabled, total, attention })),
+      [
+        { path: busy, title: 'busy', enabled: true, total: 2, attention: 1 },
+        { path: quiet, title: 'quiet', enabled: true, total: 0, attention: 0 },
+      ],
+    )
+  })
+
+  it('reports every workspace inside one project root, counting its shared file once', async () => {
+    const repo = join(project, 'overview-mono')
+    const nested = join(repo, 'packages')
+    await mkdir(join(repo, '.git'), { recursive: true })
+    const api = makeApi('overview-mono', {
+      projects: [{ path: repo, title: 'repo' }, { path: nested, title: 'pkg' }],
+      markers: ['.git'],
+    })
+    await api.storeFor(nested).create({ items: [{ title: 'in the monorepo' }], origin: 'user', scope: 'project' })
+    const response = await api.send('GET', '/state', { query: { project: repo } })
+    assert.deepEqual(
+      response.body.projects.map(({ path, projectRoot, total }) => ({ path, projectRoot, total })),
+      [
+        { path: repo, projectRoot: repo, total: 1 },
+        { path: nested, projectRoot: repo, total: 1 },
+      ],
+    )
+  })
+
+  it('reports the project level as disabled where todos are stored globally only', async () => {
+    const api = makeApi('overview-global', {
+      level: 'global',
+      defaultScope: 'global',
+      projects: [{ path: join(project, 'overview-global'), title: 'global-only' }],
+    })
+    const response = await api.send('GET', '/state', { query: { project: api.cwd } })
+    assert.deepEqual(response.body.projects.map(({ enabled, total, attention }) => ({ enabled, total, attention })), [
+      { enabled: false, total: 0, attention: 0 },
+    ])
   })
 
   it('returns summaries, never the full detail, and keeps the counts before the status filter', async () => {

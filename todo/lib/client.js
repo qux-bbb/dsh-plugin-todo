@@ -145,6 +145,14 @@ window.__ModuleLoader__.load({
 .todoNotice{color:var(--dsw-alias-state-success-primary,#1a7f37);font-size:12px;white-space:pre-wrap}
 .todoError{color:var(--dsw-alias-state-error-primary,#cf222e);font-size:12px;white-space:pre-wrap}
 .todoPath{color:var(--dsw-alias-label-caption,#8b949e);font-size:11px;word-break:break-all}
+.todoProjects{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.todoProjectsDivider{width:1px;height:14px;background:var(--dsw-alias-border-l3,rgba(127,127,127,.35));margin:0 2px}
+.todoProject{border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.35));border-radius:999px;background:0 0;color:var(--dsw-alias-label-secondary,#57606a);font:inherit;font-size:11px;line-height:16px;padding:2px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;max-width:260px}
+.todoProject:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.14))}
+.todoProject[data-active=true]{border-color:var(--dsw-alias-label-primary,#1f2328);color:var(--dsw-alias-label-primary,#1f2328);font-weight:500}
+.todoProject[data-attention=true]{border-color:var(--dsw-alias-state-warning-primary,rgba(191,135,0,.55))}
+.todoProjectName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.todoProjectAttention{color:var(--dsw-alias-state-warning-primary,#bf8700)}
 .todoPromptDraft{display:flex;flex-direction:column;gap:6px;border:.5px solid var(--dsw-alias-border-l3,rgba(127,127,127,.35));border-radius:8px;padding:8px}
 `
 
@@ -280,14 +288,76 @@ window.__ModuleLoader__.load({
      * which would name a different project than the one being edited.
      * @param {Array<{ path: string, title?: string }>} projects - registered workspaces.
      * @param {string | null} current - the project this panel is addressing.
-     * @returns {Array<{ path: string, title: string, followed: boolean }>} dropdown entries.
+     * @returns {Array<{ path: string, title: string, projectRoot?: string, followed: boolean }>} dropdown entries.
      */
     function projectOptions(projects, current) {
-      const entries = projects.map((entry) => ({ path: entry.path, title: entry.title || entry.path, followed: false }))
+      const entries = projects.map((entry) => ({ path: entry.path, title: entry.title || entry.path, projectRoot: entry.projectRoot, followed: false }))
       if (current !== null && current !== undefined && current !== '' && !entries.some((entry) => entry.path === current)) {
-        entries.unshift({ path: current, title: `${folderName(current)}（当前会话）`, followed: true })
+        entries.unshift({ path: current, title: `${folderName(current)}（当前会话）`, projectRoot: current, followed: true })
       }
       return entries
+    }
+
+    /** A count that is safe to render: a positive finite number, else zero. */
+    function positiveCount(value) {
+      return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+    }
+
+    /**
+     * The projects the panel can show, each with how many todos it holds, so the
+     * toolbar answers "which projects have todos" without the user switching to
+     * them one at a time.
+     *
+     * The project the panel is addressing takes its numbers from the live level
+     * payload instead of the registry row: that is the copy mutations refresh, so
+     * the current chip stays right while the other rows only change on reload. It
+     * always sorts first; the rest go by what needs the user, then by size, so
+     * the projects worth opening are leftmost.
+     * @param {object|null} state - the panel state, or null before the first load.
+     * @returns {Array<{ path: string, title: string, current: boolean, projectRoot: string, total: number, attention: number }>} one row per project.
+     */
+    function projectOverview(state) {
+      if (state === null || state === undefined) return []
+      const currentPath = state.current?.path ?? null
+      const currentRoot = state.current?.projectRoot ?? currentPath
+      const registered = Array.isArray(state.projects) ? state.projects : []
+      const rows = []
+      const seenPaths = new Set()
+      const seenRoots = new Set()
+      const push = (entry, current, projectRoot) => {
+        const path = typeof entry?.path === 'string' ? entry.path : ''
+        if (path.length === 0 || seenPaths.has(path)) return
+        const root = typeof entry.projectRoot === 'string' && entry.projectRoot.length > 0
+          ? entry.projectRoot
+          : projectRoot ?? path
+        // One chip per project: workspaces nested in a project share its file,
+        // and the strip must not claim the same todos twice.
+        if (seenRoots.has(root)) return
+        seenPaths.add(path)
+        seenRoots.add(root)
+        const live = current && state.levels?.project?.enabled === true
+        rows.push({
+          path,
+          title: entry.title || folderName(path),
+          current,
+          projectRoot: root,
+          total: live ? totalOf(state, 'project') : positiveCount(entry.total),
+          attention: live ? attentionOf(state, 'project') : positiveCount(entry.attention),
+        })
+      }
+      if (typeof currentPath === 'string' && currentPath.length > 0) {
+        // Reuse the registry row when there is one: it carries the counts the
+        // live level cannot supply while the project level is disabled.
+        const known = registered.find((entry) => entry?.path === currentPath)
+        push(known ?? { path: currentPath, title: `${folderName(currentPath)}（当前会话）` }, true, currentRoot)
+      }
+      for (const entry of registered) push(entry, entry?.path === currentPath)
+      return rows.sort((left, right) => {
+        if (left.current !== right.current) return left.current ? -1 : 1
+        if (left.attention !== right.attention) return right.attention - left.attention
+        if (left.total !== right.total) return right.total - left.total
+        return left.title.localeCompare(right.title)
+      })
     }
 
     /** The picker value that addresses one session. */
@@ -776,6 +846,32 @@ window.__ModuleLoader__.load({
         setNotice('无法自动复制，请手动选中下面的提示词。')
       }
 
+      /** Close whatever row was open, so a scope switch starts from a clean toolbar. */
+      const resetRows = () => {
+        setExpanded(null)
+        setEditing(null)
+        setPromptDraft(null)
+        setFallback(null)
+        setNotice(null)
+      }
+
+      /**
+       * Show one project: switch to the project level and pin the choice. Picking
+       * the session's own directory means "follow the session" again, exactly
+       * like the dropdown, so the two stay interchangeable.
+       */
+      const chooseProject = (path) => {
+        setScope('project')
+        setManual(activeSession.cwd !== null && path === activeSession.cwd ? null : path)
+        resetRows()
+      }
+
+      /** Show the global level: the todos every project shares. */
+      const chooseGlobal = () => {
+        setScope('global')
+        resetRows()
+      }
+
       const level = state?.levels?.[scope] ?? null
       const rows = (level?.todos ?? []).filter((todo) => {
         if (!matchesFilter(todo, filter)) return false
@@ -788,6 +884,71 @@ window.__ModuleLoader__.load({
       })
       const projects = state?.projects ?? []
       const options = projectOptions(projects, state?.current?.path ?? null)
+      /** The per-project counts, keyed by path, for the dropdown labels. */
+      const overview = projectOverview(state)
+      const overviewByPath = new Map(overview.map((project) => [project.path, project]))
+      /** The same rows by project root: a second workspace inside one project shares its file. */
+      const overviewByRoot = new Map()
+      for (const project of overview) {
+        if (!overviewByRoot.has(project.projectRoot)) overviewByRoot.set(project.projectRoot, project)
+      }
+      /** One project's dropdown label: its name, plus its todo count when it has any. */
+      const projectOptionLabel = (entry) => {
+        const stats = overviewByPath.get(entry.path) ?? overviewByRoot.get(entry.projectRoot)
+        return stats === undefined || stats.total === 0 ? entry.title : `${entry.title} · ${stats.total} 条`
+      }
+      /**
+       * The scope overview directly under the page title: every project holding
+       * todos, plus the global list, each with its count. The project the panel is
+       * addressing always has a chip, so the row doubles as a scope switch; empty
+       * projects are left out. It only appears once something is actually stored,
+       * so a brand-new install keeps a single title line.
+       */
+      const globalEnabled = state?.levels?.global?.enabled === true
+      const globalTotal = totalOf(state, 'global')
+      const globalAttention = attentionOf(state, 'global')
+      const overviewRows = overview.filter((project) => project.current || project.total > 0)
+      const overviewVisible = state !== null
+        && (overviewRows.some((project) => project.total > 0) || globalTotal > 0)
+      const overviewBlock = overviewVisible
+        ? h('div', { className: 'todoProjects', key: 'projects' },
+          h('span', { className: 'todoFieldLabel' }, '项目待办'),
+          overviewRows.map((project) => h('button', {
+            key: project.path,
+            type: 'button',
+            className: 'todoProject',
+            'data-active': String(scope === 'project' && project.current),
+            'data-attention': String(project.attention > 0),
+            'aria-pressed': String(scope === 'project' && project.current),
+            title: `${project.path}\n共 ${project.total} 条待办${project.attention > 0 ? `，其中 ${project.attention} 条待你处理` : ''}\n点一下切换到该项目`,
+            onClick: () => chooseProject(project.path),
+          },
+          h('span', { className: 'todoProjectName' }, project.title),
+          h('span', { className: 'todoCount' }, String(project.total)),
+          project.attention > 0
+            ? h('span', { className: 'todoProjectAttention' }, `${project.attention} 待处理`)
+            : null)),
+          globalEnabled
+            ? h('span', { className: 'todoProjectsDivider', key: 'divider', 'aria-hidden': 'true' })
+            : null,
+          globalEnabled
+            ? h('button', {
+              key: 'global',
+              type: 'button',
+              className: 'todoProject',
+              'data-active': String(scope === 'global'),
+              'data-attention': String(globalAttention > 0),
+              'aria-pressed': String(scope === 'global'),
+              title: `全局待办：所有项目共用\n共 ${globalTotal} 条待办${globalAttention > 0 ? `，其中 ${globalAttention} 条待你处理` : ''}\n点一下切到全局待办`,
+              onClick: chooseGlobal,
+            },
+            h('span', { className: 'todoProjectName' }, '全局'),
+            h('span', { className: 'todoCount' }, String(globalTotal)),
+            globalAttention > 0
+              ? h('span', { className: 'todoProjectAttention' }, `${globalAttention} 待处理`)
+              : null)
+            : null)
+        : null
       const mode = manual !== null
         ? '手动选择'
         : activeSession.cwd !== null && activeSession.cwd !== ''
@@ -805,8 +966,10 @@ window.__ModuleLoader__.load({
           h('span', { className: 'todoTitle' }, '待办 Todo'),
           state === null
             ? null
-            : h('span', { className: 'todoMeta' },
-              `需要你处理 ${attentionOf(state, scope)} 条 · 项目共 ${totalOf(state, 'project')} 条 · 全局共 ${totalOf(state, 'global')} 条`)),
+            : h('span', { className: 'todoMeta' }, `需要你处理 ${attentionOf(state, scope)} 条`)),
+        // The overview and both toolbars stay inside the header block: the
+        // counts belong to the title, the controls to the list.
+        overviewBlock,
         h('div', { className: 'todoToolbar' },
           h('div', { className: 'todoTabs' },
             ['project', 'global'].map((candidate) => {
@@ -826,14 +989,8 @@ window.__ModuleLoader__.load({
               className: 'todoSelect',
               value: manual ?? state?.current?.path ?? '',
               title: state?.projectRoot === undefined ? undefined : `项目目录：${state.projectRoot}`,
-              onChange: (event) => {
-                const chosen = event.target.value
-                // Choosing the session's own project means "follow it" again.
-                setManual(activeSession.cwd !== null && chosen === activeSession.cwd ? null : chosen)
-                setExpanded(null)
-                setEditing(null)
-              },
-            }, options.map((entry) => h('option', { key: entry.path, value: entry.path, title: entry.path }, entry.title)))
+              onChange: (event) => chooseProject(event.target.value),
+            }, options.map((entry) => h('option', { key: entry.path, value: entry.path, title: entry.path }, projectOptionLabel(entry))))
             : null,
           scope === 'project' && options.length === 0
             ? h('input', {
@@ -1299,6 +1456,7 @@ window.__ModuleLoader__.load({
     exports.TodoSessionBridge = TodoSessionBridge
     // Exported for tests.
     exports.projectOptions = projectOptions
+    exports.projectOverview = projectOverview
     exports.targetOptions = targetOptions
     exports.parseTarget = parseTarget
     exports.sessionLabel = sessionLabel

@@ -34,7 +34,7 @@ $node = "$env:USERPROFILE\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\nod
 
 - 模型工具：`todo_propose` / `todo_list` / `todo_get` / `todo_claim` / `todo_update` / `todo_submit` / `todo_void`
 - 人类命令：`/todo [add <标题> | done <id> | show <id>]`
-- 面板：侧边栏「待办」图标 + 中央 `main` 页面，3 个筛选分组（待我处理 / 进行中 / 全部）、搜索、手动添加、查看/编辑详情、行内操作
+- 面板：侧边栏「待办」图标 + 中央 `main` 页面，3 个筛选分组（待我处理 / 进行中 / 全部）、搜索、手动添加、查看/编辑详情、行内操作；标题下方「项目待办」直接列出每个项目与全局各有多少条待办（含待你处理数），点一下切换项目或全局
 - 「交给 AI 完成」可选投递到哪条会话（`当前会话` / `新建会话` / 其他会话；冷会话也能投），全局待办还能选项目
 - 存储：明文 JSON Lines，一层一个文件——`global` = `$DSH_HOME/todo/todos.jsonl`，`project` = `<项目根>/.dsh/todo/todos.jsonl`
 
