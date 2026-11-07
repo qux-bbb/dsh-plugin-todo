@@ -639,7 +639,7 @@ export function apply(ctx, config = {}) {
   if (options.enableCommand && commands !== undefined && typeof commands.register === 'function') {
     ctx.effect(() => commands.register({
       name: 'todo',
-      description: 'Show the todo list, or add / finish / inspect one todo',
+      description: '查看待办清单，或添加 / 完成 / 查看单条待办',
       input: { hint: '[add <title> | done <id> | show <id>] — 留空则列出待办' },
       handler: async (invocation) => {
         const store = storeFor(invocation.agent?.session?.header?.cwd ?? process.cwd())
